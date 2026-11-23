@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Megamotor</title>
+<style>
+:root{--bg:#0e0f12;--card:#17191f;--line:#262a33;--tx:#eceef3;--mut:#8b93a5;--ac:#ffcc1a;--ok:#3ddc84;--bad:#ff5c5c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,sans-serif}
+header{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;letter-spacing:.04em}
+header span{color:var(--ac)}
+main{display:grid;grid-template-columns:280px 1fr;min-height:calc(100vh - 50px)}
+@media(max-width:760px){main{grid-template-columns:1fr}}
+#list{border-right:1px solid var(--line);padding:10px}
+.item{padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer;background:var(--card)}
+.item.on{border-color:var(--ac)}.item small{color:var(--mut);display:block}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:#262a33;color:var(--mut)}
+.tag.aprobado{color:var(--ok)}.tag.publicado{color:var(--ac)}
+#view{padding:18px;display:grid;gap:14px;max-width:760px}
+video{width:100%;max-width:360px;border-radius:12px;background:#000;aspect-ratio:9/16}
+label{color:var(--mut);font-size:13px}textarea,input{width:100%;background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
+textarea{min-height:130px}.row{display:flex;gap:10px;flex-wrap:wrap}
+button{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px 16px;font:inherit;cursor:pointer}
+button.p{background:var(--ac);color:#111;border-color:var(--ac);font-weight:700}button.ok{background:var(--ok);color:#06210f;border-color:var(--ok);font-weight:700}
+#msg{color:var(--mut);min-height:1.4em}.empty{color:var(--mut);padding:20px}
+</style></head><body>
+<header>MEGA<span>MOTOR</span> · aprobación</header>
+<main><div id="list"></div><div id="view"><div class="empty">Elige un reel de la lista.</div></div></main>
+<script>
+const $=s=>document.querySelector(s);let cur=null;
+async function api(p,o){const r=await fetch(p,o);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
+async function load(){const js=await api('/api/jobs');$('#list').innerHTML=js.length?js.map(j=>`<div class="item ${cur===j.id?'on':''}" onclick="open_('${j.id}')"><b>${j.id}</b><small><span class="tag ${j.status}">${j.status}</span></small></div>`).join(''):'<div class="empty">Sin trabajos aún.<br>Crea uno: <code>python -m megamotor new video.mp4</code></div>'}
+async function open_(id){cur=id;const {job,plan}=await api('/api/job/'+id);load();
+$('#view').innerHTML=`<h3 style="margin:0">${id} <span class="tag ${job.status}">${job.status}</span></h3>
+${job.status==='nuevo'||job.status==='transcrito'?'<div class="empty">Aún sin render. Corre <code>render</code>.</div>':`<video controls playsinline poster="/media/${id}/cover.jpg" src="/media/${id}/reel.mp4"></video>`}
+<div><label>Gancho</label><input id="hook" value="${(plan.hook||'').replace(/"/g,'&quot;')}"></div>
+<div><label>Descripción</label><textarea id="cap">${plan.caption||''}</textarea></div>
+<div><label>Etiquetas (separadas por espacio)</label><input id="tags" value="${(plan.hashtags||[]).join(' ')}"></div>
+<div class="row"><button onclick="save()">Guardar</button><button class="ok" onclick="appr()">Aprobar</button><button class="p" onclick="pub()">Publicar en Instagram</button></div><div id="msg"></div>`}
+function body(){return JSON.stringify({hook:$('#hook').value,caption:$('#cap').value,hashtags:$('#tags').value.split(/\s+/).filter(Boolean)})}
+async function save(){try{await api(`/api/job/${cur}/plan`,{method:'POST',body:body()});$('#msg').textContent='Guardado.'}catch(e){$('#msg').textContent=e.message}}
+async function appr(){try{await save();await api(`/api/job/${cur}/approve`,{method:'POST',body:'{}'});$('#msg').textContent='Aprobado.';open_(cur)}catch(e){$('#msg').textContent=e.message}}
+async function pub(){if(!confirm('¿Publicar este reel en tu Instagram ahora?'))return;try{$('#msg').textContent='Subiendo…';const r=await api(`/api/job/${cur}/publish`,{method:'POST',body:'{}'});$('#msg').textContent='Publicado: '+r.media_id;open_(cur)}catch(e){$('#msg').textContent=e.message}}
+load();
+</script></body></html>
