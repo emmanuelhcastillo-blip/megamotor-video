@@ -25,6 +25,7 @@ EOF
 
 python3 tests/test_cuts.py
 python3 tests/test_reframe.py
+python3 tests/test_motion.py
 python3 -m megamotor cuts "$ID"
 python3 - "$D" <<'EOF'
 import json, sys
@@ -108,4 +109,22 @@ print("OK efectos:", r)
 EOF
 echo '{"caption":"x","pip":[{"start":4,"end":6,"image":"../../../etc/passwd"}]}' > "$D3/plan.json"
 if python3 -m megamotor render "$ID3" --subs es 2>/dev/null; then echo "FALLO: aceptó imagen fuera del trabajo"; exit 1; fi
+echo '{"caption":"x","pip":[{"start":1,"end":2,"image":"img/foto.jpg"},{"start":4,"end":5,"image":"img/foto.jpg"}]}' > "$D3/plan.json"
+if python3 -m megamotor render "$ID3" --subs es 2>/dev/null; then echo "FALLO: aceptó imagen repetida"; exit 1; fi
+echo '{"caption":"x","pip":[{"start":1,"end":5.5,"image":"img/foto.jpg","circle":false}]}' > "$D3/plan.json"
+if python3 -m megamotor render "$ID3" --subs es 2>/dev/null; then echo "FALLO: imagen sola más de 3,5 s"; exit 1; fi
+
+# capa de motion con Remotion (solo si está instalada: cd motion && npm install)
+if [ -d motion/node_modules ]; then
+  echo '{"caption":"x","pip":[{"start":1,"end":3.5,"image":"img/foto.jpg","circle":false}],"motion":[{"start":0.3,"end":0.8,"kind":"barrido"},{"start":4,"end":5.5,"kind":"cifra","value":80,"suffix":"%","label":"prueba"}]}' > "$D3/plan.json"
+  python3 -m megamotor render "$ID3" --subs es | tail -1
+  python3 - "$D3" <<'EOF'
+import json, sys
+r = json.load(open(sys.argv[1] + "/render_report.json"))
+assert r["qa_ok"] and r["motion"] == 2 and r["pip"] == 1, r
+print("OK motion:", r["render_seconds"], "s")
+EOF
+else
+  echo "AVISO: motion/node_modules no existe; se salta el render con Remotion"
+fi
 echo "SMOKE OK"

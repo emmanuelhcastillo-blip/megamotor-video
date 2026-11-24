@@ -4,7 +4,7 @@ import json
 import pathlib
 import time
 
-from . import captions, cuts, effects, media, qa, reframe
+from . import captions, cuts, effects, media, motion, qa, reframe
 from .config import env
 
 
@@ -56,19 +56,30 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
             scale = f"scale={sw}:{sh}"
         graph.append(f"[{vin}]{scale},setsar=1,{crop}[vbase]")
         pips = effects._to_out(plan.get("pip"), segs)
-        effects.no_overlap(zooms + pips)
     else:
         graph.append(f"[{vin}]null[vbase]")
+    words_file = job_dir / "words.json"
+    all_words = json.loads(words_file.read_text(encoding="utf-8"))["words"] if words_file.exists() else []
+    mitems = effects._to_out(motion.validate(plan.get("motion"), all_words), segs)
+    effects.no_overlap(zooms + pips + mitems)
 
     vcur = "vbase"
     if pips:
         imgs = effects.pip_images(job_dir, pips)
         mask, ring = effects.make_masks(job_dir)
-        first = len(inputs) // 2
+        first = inputs.count("-i")
         inputs += ["-i", mask.name, "-i", ring.name]
         for img in imgs:
             inputs += ["-loop", "1", "-i", str(img)]
         parts, vcur = effects.pip_graph(vcur, pips, first, fps, box)
+        graph += parts
+    if mitems:
+        mitems = motion.place(mitems, box)
+        paths = motion.render_clips(job_dir, mitems)
+        first = inputs.count("-i")
+        for f in paths:
+            inputs += ["-i", str(f.relative_to(job_dir))]
+        parts, vcur = motion.overlay_graph(vcur, mitems, paths, first)
         graph += parts
 
     if subs != "none":
@@ -79,6 +90,9 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         pt = plan.get("pt_segments") if subs == "es-pt" else None
         if segs:
             words, pt = cuts.remap_words(words, segs), cuts.remap_segments(pt, segs)
+        # durante la tipografía cinética el texto ya está en pantalla: no se repite en el subtítulo ES
+        kin = [(m["start"], m["end"]) for m in mitems if m["kind"] == "cinetica"]
+        words = [w for w in words if not any(a - 0.05 <= w["start"] < b for a, b in kin)]
         ass = captions.build_ass(words, pt, font=font or env("SUB_FONT", "DejaVu Sans"))
         (job_dir / "subs.ass").write_text(ass, encoding="utf-8")
         graph.append(f"[{vcur}]ass=subs.ass[vout]")
@@ -110,7 +124,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
               "cut_seconds": round(info["duration"] - expected, 2),
               "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
-              "zooms": len(zooms), "pip": len(pips),
+              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems),
               "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}
     t1 = time.time()
     rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None, segs=segs or [],
