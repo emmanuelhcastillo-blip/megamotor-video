@@ -19,10 +19,14 @@ def _esc(txt):
     return txt.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
-def group_words(words, max_words=3, max_gap=0.55):
+def group_words(words, max_words=3, max_gap=0.55, max_chars=18):
+    """Grupos cortos para leer en móvil. max_chars: a 84 px en mayúsculas caben ~18 caracteres en 940 px
+    (1080 menos márgenes); con WrapStyle 2 no hay salto de línea, así que el límite evita que se salga."""
     groups, cur = [], []
     for w in words:
-        if cur and (len(cur) >= max_words or w["start"] - cur[-1]["end"] > max_gap or PUNCT_BREAK.search(cur[-1]["word"])):
+        chars = sum(len(x["word"]) + 1 for x in cur) + len(w["word"])
+        if cur and (len(cur) >= max_words or chars > max_chars or w["start"] - cur[-1]["end"] > max_gap
+                    or PUNCT_BREAK.search(cur[-1]["word"])):
             groups.append(cur)
             cur = []
         cur.append(w)
