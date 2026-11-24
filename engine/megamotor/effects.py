@@ -4,6 +4,8 @@
 - "pip":   [{"start": 8.0, "end": 11.0, "image": "img/foto.jpg", "circle": true}]
   la imagen ocupa la pantalla (paneo lento) y la persona sigue hablando en un círculo; "circle": false = sin
   círculo (máx. 3,5 s). Imágenes reales, sin repetir.
+- "color": "natural" | "pop" | {"contrast":1.1,"saturation":1.3,"gamma":0.98,"warmth":0.03,"vignette":true}
+  corrección de color sobre la persona (no sobre las imágenes del pip ni los gráficos).
 Pocos efectos y sin superponer: se rechazan zooms o pip que se pisen entre sí.
 """
 import pathlib
@@ -134,3 +136,26 @@ def pip_graph(base, pips, first_input, fps, box=None):
         parts.append(f"[pring][pa]overlay={PIP_X}:{PIP_Y}:enable='{on}':shortest=1[pout]")
         cur = "pout"
     return parts, cur
+
+
+COLOR_PRESETS = {
+    "natural": {"contrast": 1.06, "saturation": 1.2, "gamma": 1.0, "warmth": 0.0, "vignette": False},
+    # para material plano o lavado: más contraste y color, sombras algo frías y altas cálidas, viñeta suave
+    "pop": {"contrast": 1.12, "saturation": 1.45, "gamma": 0.97, "warmth": 0.03, "vignette": True},
+}
+
+
+def grade(spec):
+    """Cadena de filtros de color o "" si no se pide."""
+    if not spec:
+        return ""
+    c = dict(COLOR_PRESETS[spec]) if isinstance(spec, str) else dict(COLOR_PRESETS["natural"], **spec)
+    if not (0.8 <= c["contrast"] <= 1.4 and 0.5 <= c["saturation"] <= 2.0 and 0.8 <= c["gamma"] <= 1.2):
+        raise SystemExit(f"color fuera de rango: {c}")
+    w = float(c.get("warmth", 0))
+    f = [f"eq=contrast={c['contrast']}:saturation={c['saturation']}:gamma={c['gamma']}"]
+    if w:
+        f.append(f"colorbalance=rs={-w:.3f}:bs={w:.3f}:rm={w * 0.6:.3f}:rh={w:.3f}:bh={-w:.3f}")
+    if c.get("vignette"):
+        f.append("vignette=PI/5")
+    return ",".join(f)

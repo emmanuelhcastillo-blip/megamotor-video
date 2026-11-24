@@ -100,12 +100,12 @@ cp "$D/words.json" "$D3/"; mkdir -p "$D3/img"
 ffmpeg -y -v error -f lavfi -i "mandelbrot=size=800x600" -frames:v 1 "$D3/img/foto.jpg"
 echo '{"caption":"x","zooms":[{"start":1,"end":3,"scale":1.15}],"pip":[{"start":2.5,"end":5,"image":"img/foto.jpg"}]}' > "$D3/plan.json"
 if python3 -m megamotor render "$ID3" --subs es 2>/dev/null; then echo "FALLO: aceptó efectos superpuestos"; exit 1; fi
-echo '{"caption":"x","zooms":[{"start":1,"end":2.5,"scale":1.15}],"pip":[{"start":4,"end":6.5,"image":"img/foto.jpg"}]}' > "$D3/plan.json"
+echo '{"caption":"x","color":"pop","zooms":[{"start":1,"end":2.5,"scale":1.15}],"pip":[{"start":4,"end":6.5,"image":"img/foto.jpg"}]}' > "$D3/plan.json"
 python3 -m megamotor render "$ID3" --subs es | tail -1
 python3 - "$D3" <<'EOF'
 import json, sys
 r = json.load(open(sys.argv[1] + "/render_report.json"))
-assert r["qa_ok"] and r["zooms"] == 1 and r["pip"] == 1 and r["resolution"] == "1080x1920", r
+assert r["qa_ok"] and r["color"] == "pop" and r["zooms"] == 1 and r["pip"] == 1 and r["resolution"] == "1080x1920", r
 print("OK efectos:", r)
 EOF
 echo '{"caption":"x","pip":[{"start":4,"end":6,"image":"../../../etc/passwd"}]}' > "$D3/plan.json"

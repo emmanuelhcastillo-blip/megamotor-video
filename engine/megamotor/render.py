@@ -53,6 +53,9 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
                 tracked = rf["face_ratio"]
                 box = rf.get("face_box")
         chain = f"{crop},scale=1080:1920,setsar=1"
+        g = effects.grade(plan.get("color"))
+        if g:
+            chain += "," + g
         zooms = effects._to_out(plan.get("zooms"), segs)
         if zooms:
             # fuera de los zooms el tamaño no cambia y el escalado no trabaja
@@ -61,7 +64,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         graph.append(f"[{vin}]{chain}[vbase]")
         pips = effects._to_out(plan.get("pip"), segs)
     else:
-        graph.append(f"[{vin}]null[vbase]")
+        graph.append(f"[{vin}]{effects.grade(plan.get('color')) or 'null'}[vbase]")
     words_file = job_dir / "words.json"
     all_words = json.loads(words_file.read_text(encoding="utf-8"))["words"] if words_file.exists() else []
     mitems = effects._to_out(motion.validate(plan.get("motion"), all_words), segs)
@@ -137,7 +140,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
               "cut_seconds": round(info["duration"] - expected, 2),
               "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
-              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems), "sound": srep,
+              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems), "color": plan.get("color"), "sound": srep,
               "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}
     t1 = time.time()
     tap = qa.parse(p.stderr, job_dir / (out.name + ".yavg.txt"), res, video=True)
