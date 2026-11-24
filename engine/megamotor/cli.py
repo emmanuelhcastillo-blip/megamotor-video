@@ -33,7 +33,11 @@ def main(argv=None):
     sub.add_parser("status", help="lista trabajos")
     s = sub.add_parser("approve", help="aprobar para publicar"); s.add_argument("id")
     s = sub.add_parser("publish", help="publicar en Instagram (solo aprobados)"); s.add_argument("id")
+    s.add_argument("--check", action="store_true", help="solo comprobar (token, cupo, archivo); no publica")
     s = sub.add_parser("comments", help="leer comentarios del reel publicado"); s.add_argument("id")
+    s.add_argument("--draft", action="store_true", help="guardar comentarios y preparar replies.json para redactar")
+    s = sub.add_parser("insights", help="métricas del reel publicado -> insights.json"); s.add_argument("id")
+    sub.add_parser("performance", help="ranking de reels publicados por retención: afina la fórmula de gancho")
     s = sub.add_parser("replies", help="enviar respuestas aprobadas en replies.json"); s.add_argument("id")
     s = sub.add_parser("ui", help="interfaz local de aprobación"); s.add_argument("--port", type=int, default=8765)
     sub.add_parser("doctor", help="revisar entorno y claves")
@@ -115,12 +119,27 @@ def main(argv=None):
         jobs.approve(a.id); print("aprobado")
     elif a.cmd == "publish":
         from . import publish
-        print("publicado:", publish.publish_reel(a.id))
+        if a.check:
+            res = publish.check(a.id)
+            for name, ok, detail in res: print(("OK   " if ok else "FALLO ") + f"{name}: {detail}")
+            if not all(ok for _, ok, _ in res): raise SystemExit(1)
+        else:
+            print("publicado:", publish.publish_reel(a.id))
     elif a.cmd == "comments":
         from . import publish
         j = jobs.read(a.id)
         if not j.get("media_id"): raise SystemExit("Ese trabajo aún no está publicado.")
-        for c in publish.list_comments(j["media_id"]): print(f"[{c['id']}] @{c.get('username')}: {c['text']}")
+        if a.draft:
+            n, pend = publish.draft_replies(a.id); print(f"{n} comentarios · {pend} respuestas por redactar en replies.json")
+        else:
+            for c in publish.list_comments(j["media_id"]): print(f"[{c['id']}] @{c.get('username')}: {c['text']}")
+    elif a.cmd == "insights":
+        from . import publish
+        print(json.dumps(publish.insights(a.id), indent=2))
+    elif a.cmd == "performance":
+        from . import publish
+        for r in publish.performance():
+            print(f"{r['id']:<28} ret {r['retention']}  vistas {r['views']:<7} interacción {r['engagement']}  gancho: {r['hook'][:60]}")
     elif a.cmd == "replies":
         from . import publish
         print("enviadas:", publish.send_approved_replies(a.id))

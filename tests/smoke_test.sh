@@ -168,4 +168,38 @@ lo, hi = j["parent_range"]
 assert r["qa_ok"] and abs(r["source_seconds"] - (hi - lo)) < 0.1 and w and w[0]["start"] >= 0, (r, j)
 print("OK clip:", j["parent"], j["parent_range"], r["output_seconds"], "s")
 EOF
+# publicación y comunidad contra un Graph API simulado (nunca contra Meta en la prueba)
+GLOG="$MEGAMOTOR_DATA/graph.log"; PORT=$((20000 + RANDOM % 20000))
+python3 tests/fake_graph.py $PORT "$GLOG" & GPID=$!
+trap 'kill $GPID 2>/dev/null; rm -rf "$MEGAMOTOR_DATA"' EXIT
+sleep 0.5
+export IG_GRAPH_URL="http://127.0.0.1:$PORT" IG_ACCESS_TOKEN=tok-prueba IG_USER_ID=17840 IG_POLL_SECONDS=0.05
+python3 -m megamotor publish "$ID" --check
+python3 -m megamotor publish "$ID" | tail -1
+python3 -m megamotor comments "$ID" --draft
+python3 - "$D" <<'EOF'
+import json, sys
+f = sys.argv[1] + "/replies.json"; r = json.load(open(f))
+assert [x["comment_id"] for x in r] == ["k1", "k2"] and not any(x["approved"] for x in r), r
+r[0].update(text="Empieza por un 5 %, lo importante es el hábito.", approved=True)
+r[1].update(approved=True)   # aprobado pero vacío: no debe enviarse
+json.dump(r, open(f, "w"))
+EOF
+python3 -m megamotor replies "$ID"
+python3 -m megamotor comments "$ID" --draft >/dev/null   # no duplica ni pisa lo redactado
+python3 -m megamotor insights "$ID" >/dev/null
+python3 -m megamotor performance
+python3 - "$D" "$GLOG" <<'EOF'
+import json, sys
+d, log = sys.argv[1], [json.loads(l) for l in open(sys.argv[2])]
+assert all(x["auth_ok"] for x in log if not x["p"].startswith("/upload")), "token en todas las llamadas"
+j = json.load(open(d + "/job.json")); assert j["status"] == "publicado" and j["media_id"] == "m1", j
+r = json.load(open(d + "/replies.json"))
+assert len(r) == 2 and r[0]["sent"] and not r[1].get("sent") and r[0]["text"].startswith("Empieza"), r
+assert sum(1 for x in log if x["p"].endswith("/replies")) == 1, "solo la respuesta aprobada y con texto"
+i = json.load(open(d + "/insights.json"))
+assert i["views"] == 1000 and "ig_reels_video_view_total_time" in i["_errors"], i
+print("OK publicación simulada:", len(log), "llamadas")
+EOF
+unset IG_GRAPH_URL IG_ACCESS_TOKEN IG_USER_ID IG_POLL_SECONDS
 echo "SMOKE OK"
