@@ -24,6 +24,7 @@ cat > "$D/plan.json" <<'EOF'
 EOF
 
 python3 tests/test_cuts.py
+python3 tests/test_reframe.py
 python3 -m megamotor cuts "$ID"
 python3 - "$D" <<'EOF'
 import json, sys

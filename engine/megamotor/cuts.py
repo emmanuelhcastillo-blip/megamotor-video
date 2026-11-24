@@ -111,6 +111,16 @@ def map_time(t, segs):
     return None
 
 
+def unmap_time(t, segs):
+    """Tiempo de salida -> tiempo del original."""
+    acc = 0.0
+    for a, b in segs:
+        if t <= acc + b - a:
+            return a + t - acc
+        acc += b - a
+    return segs[-1][1] if segs else t
+
+
 def map_range(r, segs):
     """Rango del original -> lista de rangos en la salida (puede partirse)."""
     out, acc = [], 0.0

@@ -23,6 +23,7 @@ def main(argv=None):
     s.add_argument("id"); s.add_argument("--subs", choices=["none", "es", "es-pt"], default="es")
     s.add_argument("--horizontal", action="store_true"); s.add_argument("--crop-x", type=int); s.add_argument("--crf", type=int, default=20)
     s.add_argument("--apply-cuts", action="store_true", help="aplica cuts.json (exige aprobación del dueño)")
+    s.add_argument("--no-track", action="store_true", help="sin seguimiento de cara: recorte centrado")
     s = sub.add_parser("qa", help="QA automático del reel -> qa_report.json"); s.add_argument("id")
     sub.add_parser("status", help="lista trabajos")
     s = sub.add_parser("approve", help="aprobar para publicar"); s.add_argument("id")
@@ -69,7 +70,7 @@ def main(argv=None):
     elif a.cmd == "render":
         from . import render
         d = jobs.path(a.id)
-        rep = render.render(d, a.subs, not a.horizontal, a.crop_x, crf=a.crf, apply_cuts=a.apply_cuts)
+        rep = render.render(d, a.subs, not a.horizontal, a.crop_x, crf=a.crf, apply_cuts=a.apply_cuts, track=not a.no_track)
         jobs.write(a.id, status="renderizado" if rep["qa_ok"] else "qa_fallido"); print(json.dumps(rep, indent=2))
         from . import qa
         print(qa.summary(json.loads((d / "qa_report.json").read_text(encoding="utf-8"))))

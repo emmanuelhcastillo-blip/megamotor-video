@@ -4,11 +4,11 @@ import json
 import pathlib
 import time
 
-from . import captions, cuts, media, qa
+from . import captions, cuts, media, qa, reframe
 from .config import env
 
 
-def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=None, crf=20, apply_cuts=False):
+def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=None, crf=20, apply_cuts=False, track=True):
     job_dir = pathlib.Path(job_dir)
     src = next(job_dir.glob("source.*"))
     info = media.probe(src)
@@ -24,10 +24,20 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
             segs = None
     expected = sum(b - a for a, b in segs) if segs else info["duration"]
 
+    tracked = None
     if vertical:
-        # cubre 1080x1920 y recorta. crop_x en píxeles del frame ya escalado; None = centro.
+        # cubre 1080x1920 y recorta. crop_x en píxeles del frame ya escalado; None = seguir la cara (o centro).
         x = "(iw-1080)/2" if crop_x is None else str(int(crop_x))
-        vf.append(f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:{x}:(ih-1920)/2")
+        crop = f"crop@rf=1080:1920:{x}:(ih-1920)/2"
+        if crop_x is None and track and info["width"] * 1920 > info["height"] * 1080 * 1.02 and reframe.available():
+            rf = reframe.run(job_dir)
+            if rf["face_ratio"] >= 0.2:
+                fps_out = min(round(info["fps"]), 30)
+                to_src = (lambda t: cuts.unmap_time(t, segs)) if segs else (lambda t: t)
+                reframe.write_sendcmd(rf["path"], rf["shots"], job_dir / "crop.cmd", fps_out, expected, to_src)
+                crop = "sendcmd=f=crop.cmd," + crop
+                tracked = rf["face_ratio"]
+        vf.append(f"scale=1080:1920:force_original_aspect_ratio=increase,{crop}")
 
     if subs != "none":
         words_file = job_dir / "words.json"
@@ -76,7 +86,8 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "output_seconds": round(res["duration"], 2), "size_mb": res["size_mb"],
               "resolution": f"{res['width']}x{res['height']}", "under_10_min": secs < 600,
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
-              "cut_seconds": round(info["duration"] - expected, 2)}
+              "cut_seconds": round(info["duration"] - expected, 2),
+              "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro")}
     t1 = time.time()
     rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None, segs=segs or [])
     report["qa_ok"] = rq["ok"]

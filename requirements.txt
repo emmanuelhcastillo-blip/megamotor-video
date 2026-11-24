@@ -1,3 +1,6 @@
 requests>=2.31
 # opcional, respaldo local de transcripción:
 # faster-whisper
+# opcional, reencuadre con seguimiento de cara (la 5.x ya no trae los clasificadores Haar):
+opencv-python-headless>=4.8,<5
+numpy
