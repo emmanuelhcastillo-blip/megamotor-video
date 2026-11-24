@@ -15,6 +15,10 @@ def main(argv=None):
     s = sub.add_parser("transcribe", help="palabras con tiempos (Groq gratis; --local = faster-whisper)")
     s.add_argument("id"); s.add_argument("--local", action="store_true"); s.add_argument("--lang", default="es")
     s = sub.add_parser("silences", help="lista silencios (solo informa)"); s.add_argument("id")
+    s = sub.add_parser("cuts", help="propone cortes en cuts.json (no corta nada por sí solo)"); s.add_argument("id")
+    s.add_argument("--redo", action="store_true", help="rehacer la propuesta")
+    s.add_argument("--select", help="marcar para aplicar: 'alta' o índices '0,3,4' o 'ninguno'")
+    s.add_argument("--approve", action="store_true", help="SOLO el dueño: aprueba aplicar los cortes marcados")
     s = sub.add_parser("render", help="reel 9:16 con subtítulos, duración fiel al original")
     s.add_argument("id"); s.add_argument("--subs", choices=["none", "es", "es-pt"], default="es")
     s.add_argument("--horizontal", action="store_true"); s.add_argument("--crop-x", type=int); s.add_argument("--crf", type=int, default=20)
@@ -39,6 +43,28 @@ def main(argv=None):
     elif a.cmd == "silences":
         d = jobs.path(a.id)
         for s0, s1 in media.detect_silences(next(d.glob("source.*"))): print(f"{s0:.2f} -> {s1:.2f}")
+    elif a.cmd == "cuts":
+        from . import cuts
+        d = jobs.path(a.id)
+        data = cuts.load(d)
+        if data is None or a.redo:
+            wf = d / "words.json"
+            if not wf.exists(): raise SystemExit("No hay words.json. Corre primero: megamotor transcribe <id>")
+            dur = media.probe(next(d.glob("source.*")))["duration"]
+            data = {"owner_approved": False, "source_seconds": round(dur, 2),
+                    "cuts": cuts.propose(json.loads(wf.read_text(encoding="utf-8"))["words"], dur)}
+        if a.select:
+            sel = a.select.strip()
+            for k, c in enumerate(data["cuts"]):
+                c["apply"] = (c["confidence"] == "alta") if sel == "alta" else (sel != "ninguno" and str(k) in sel.split(","))
+            data["owner_approved"] = False  # cambiar la selección invalida la aprobación
+        if a.approve:
+            data["owner_approved"] = True
+        cuts.save(d, data)
+        for k, c in enumerate(data["cuts"]):
+            print(f"[{k}] {'X' if c['apply'] else ' '} {c['start']:7.2f}-{c['end']:7.2f} {c['kind']:<24} {c['confidence']:<5} {c['text'][:50]}")
+        sel = [c for c in data["cuts"] if c["apply"]]
+        print(f"{len(sel)} marcados, -{sum(c['end'] - c['start'] for c in sel):.1f}s · aprobado por el dueño: {'sí' if data['owner_approved'] else 'no'}")
     elif a.cmd == "render":
         from . import render
         d = jobs.path(a.id)

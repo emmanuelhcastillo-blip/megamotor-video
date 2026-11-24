@@ -22,6 +22,14 @@ cat > "$D/plan.json" <<'EOF'
 {"caption":"Prueba de humo","hashtags":["#test"],"pt_segments":[{"start":0.4,"end":2.3,"text":"Olá, isto é um teste."},{"start":3.0,"end":4.0,"text":"Segunda frase"}]}
 EOF
 
+python3 tests/test_cuts.py
+python3 -m megamotor cuts "$ID"
+python3 - "$D" <<'EOF'
+import json, sys
+c = json.load(open(sys.argv[1] + "/cuts.json"))
+assert c["cuts"] and not c["owner_approved"] and not any(x["apply"] for x in c["cuts"]), c
+EOF
+
 python3 -m megamotor render "$ID" --subs es-pt
 python3 - "$D" <<'EOF'
 import json, sys
