@@ -23,15 +23,22 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
             segs = None
     plan_file = job_dir / "plan.json"
     plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else {}
-    body = segs  # tramos del cuerpo (None = el original entero)
     tz = plan.get("teaser")
-    T = 0.0
+    teaser = []
     if tz:
-        ts, te = float(tz["start"]), float(tz["end"])
-        T = round(te - ts, 3)
-        if not (0 <= ts < te <= info["duration"] and 1.5 <= T <= 8):
+        teaser = [(float(x[0]), float(x[1])) for x in tz["parts"]] if tz.get("parts") else [(float(tz["start"]), float(tz["end"]))]
+    pcm = None
+    if (segs or teaser) and info["has_audio"]:
+        pcm = sound._pcm(src)
+        if segs:
+            segs = cuts.snap(segs, pcm, duration=info["duration"])
+        teaser = cuts.snap(teaser, pcm, duration=info["duration"])
+    body = segs  # tramos del cuerpo (None = el original entero)
+    T = round(sum(b - a for a, b in teaser), 3)
+    if teaser:
+        if not (all(0 <= a < b <= info["duration"] for a, b in teaser) and 1.5 <= T <= 8):
             raise SystemExit("teaser: debe durar entre 1,5 y 8 s dentro del video")
-        segs = [(ts, te)] + (body or [(0.0, info["duration"])])
+        segs = teaser + (body or [(0.0, info["duration"])])
     expected = sum(b - a for a, b in segs) if segs else info["duration"]
     fps = min(round(info["fps"]), 30)
     graph = []
@@ -42,7 +49,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         inputs = ["-i", src.name]
         vin, ain = "0:v", "0:a"
 
-    tracked, zooms, pips, box = None, [], [], None
+    tracked, zooms, pips, box, cam = None, [], [], None, []
     if vertical:
         # Recorta primero en la fuente (barato) y luego escala a 1080x1920. crop_x en píxeles del frame
         # escalado (compatibilidad); None = seguir la cara (o centro). El zoom es una etapa aparte.
@@ -65,9 +72,18 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         if g:
             chain += "," + g
         zooms = effects._to_out(plan.get("zooms"), body, T)
-        if zooms:
+        cam = []
+        if plan.get("dynamic"):
+            for z in zooms:
+                z.setdefault("ramp", 0.12)  # con cámara dinámica el énfasis entra más seco
+            joins, acc = [], 0.0
+            for a, b in (segs or []):
+                acc += b - a
+                joins.append(round(acc, 3))
+            cam = effects.dynamic_track(joins, expected, zooms)
+        if zooms or cam:
             # fuera de los zooms el tamaño no cambia y el escalado no trabaja
-            chain += (f",scale=w='trunc(1080*({effects.zoom_expr(zooms)})/2)*2':h=-2:eval=frame,"
+            chain += (f",scale=w='trunc(1080*({effects.zoom_expr(zooms + cam)})/2)*2':h=-2:eval=frame,"
                       f"crop=1080:1920:(iw-1080)/2:(ih-1920)*0.4")
         graph.append(f"[{vin}]{chain}[vbase]")
         pips = effects._to_out(plan.get("pip"), body, T)
@@ -83,8 +99,9 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
                                     "text": tz["text"]}])
     if tz and tz.get("transition", True) and (motion.MOTION_DIR / "node_modules").exists():
         # el teaser entra al cuerpo con un barrido y un whoosh (muy por debajo de la voz)
-        mitems.append({"start": round(T - 0.25, 3), "end": round(T + 0.25, 3), "kind": "barrido"})
-        out_sfx.append((max(0.0, T - 0.35), "whoosh"))
+        # empieza justo al acabar el teaser: el whoosh nunca encima de la última palabra del gancho
+        mitems.append({"start": round(T - 0.05, 3), "end": round(T + 0.45, 3), "kind": "barrido"})
+        out_sfx.append((max(0.0, T - 0.02), "whoosh"))
     effects.no_overlap(zooms + pips + mitems)
 
     vcur = "vbase"
@@ -157,7 +174,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if body else 0,
               "cut_seconds": round(info["duration"] + T - expected, 2), "teaser_seconds": T,
               "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
-              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems), "color": plan.get("color"), "sound": srep,
+              "zooms": len(zooms), "camera_moves": len(cam), "pip": len(pips), "motion": len(mitems), "color": plan.get("color"), "sound": srep,
               "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}
     t1 = time.time()
     tap = qa.parse(p.stderr, job_dir / (out.name + ".yavg.txt"), res, video=True)

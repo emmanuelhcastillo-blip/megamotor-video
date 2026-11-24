@@ -4,7 +4,8 @@
 - "pip":   [{"start": 8.0, "end": 11.0, "image": "img/foto.jpg", "circle": true}]
   la imagen ocupa la pantalla (paneo lento) y la persona sigue hablando en un círculo; "circle": false = sin
   círculo (máx. 3,5 s). Imágenes reales, sin repetir.
-- "teaser": {"start": 119.5, "end": 125.0, "text": "opcional"}  la frase más fuerte se repite al principio como gancho
+- "dynamic": true   cámara con ritmo de reel (cortes de zoom en cada corte y cada ~4 s, empuje lento).
+- "teaser": {"start": 119.5, "end": 125.0, "text": "opcional"} o {"parts": [[a, b], [c, d]], ...}  la frase más fuerte se repite al principio como gancho
   (se añade, no se quita nada); entra con barrido y whoosh si la capa de motion está instalada.
 - "color": "natural" | "pop" | {"contrast":1.1,"saturation":1.3,"gamma":0.98,"warmth":0.03,"vignette":true}
   corrección de color sobre la persona (no sobre las imágenes del pip ni los gráficos).
@@ -52,15 +53,56 @@ def no_overlap(items):
 
 
 def zoom_expr(zooms):
-    """Factor de zoom en función de t (expresión ffmpeg)."""
+    """Factor de zoom en función de t (expresión ffmpeg). Tipos de tramo:
+    - énfasis {"start","end","scale"[, "ramp"]}: entra y sale suave (ramp s; 0 = seco).
+    - cámara {"start","end","from","to"}: del factor from al to en línea recta (empuje lento)."""
     terms = []
     for z in zooms:
+        a, b = z["start"], z["end"]
+        if "from" in z:
+            f0, f1 = float(z["from"]), float(z["to"])
+            terms.append(f"gte(t\\,{a:.3f})*lt(t\\,{b:.3f})*({f0 - 1:.4f}+{f1 - f0:.4f}*(t-{a:.3f})/{max(b - a, 0.01):.3f})")
+            continue
         s = float(z.get("scale", 1.12))
         if not 1.0 < s <= 1.5:
             raise SystemExit(f"zoom scale {s} fuera de rango (1.0-1.5]")
-        a, b = z["start"], z["end"]
-        terms.append(f"{s - 1:.3f}*clip(min((t-{a:.3f})/{RAMP}\\,({b:.3f}-t)/{RAMP})\\,0\\,1)")
+        r = float(z.get("ramp", RAMP))
+        if r <= 0:
+            terms.append(f"{s - 1:.3f}*gte(t\\,{a:.3f})*lt(t\\,{b:.3f})")
+        else:
+            terms.append(f"{s - 1:.3f}*clip(min((t-{a:.3f})/{r}\\,({b:.3f}-t)/{r})\\,0\\,1)")
     return "1+" + "+".join(terms) if terms else "1"
+
+
+def dynamic_track(joins, total, explicit, every=4.0, level=1.10, drift=0.035, min_len=0.6):
+    """Cámara con ritmo de reel: en cada unión (corte) y cada ~`every` s en tramos largos alterna
+    plano abierto / cerrado con un corte de zoom seco, y dentro de cada plano un empuje lento.
+    Respeta los zooms de énfasis explícitos (no se pisa con ellos). Todo en tiempo de salida."""
+    marks = sorted({0.0, total, *[j for j in joins if 0 < j < total]})
+    cuts_at = []
+    for a, b in zip(marks, marks[1:]):
+        n = max(1, round((b - a) / every))
+        cuts_at += [a + (b - a) * k / n for k in range(n)]
+    cuts_at = sorted(set(round(c, 3) for c in cuts_at)) + [total]
+    busy = sorted((z["start"], z["end"]) for z in explicit)
+    out, lv = [], 0
+    for a, b in zip(cuts_at, cuts_at[1:]):
+        # restar los tramos con zoom explícito
+        pieces, cur = [], a
+        for za, zb in busy:
+            if zb <= cur or za >= b:
+                continue
+            if za > cur:
+                pieces.append((cur, za))
+            cur = max(cur, zb)
+        if cur < b:
+            pieces.append((cur, b))
+        base = level if lv % 2 else 1.0
+        for pa, pb in pieces:
+            if pb - pa >= min_len:
+                out.append({"start": round(pa, 3), "end": round(pb, 3), "from": base, "to": round(base + drift, 3)})
+        lv += 1
+    return out
 
 
 def pip_images(job_dir, pips):

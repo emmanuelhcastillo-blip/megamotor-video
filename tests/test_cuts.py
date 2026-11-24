@@ -23,3 +23,18 @@ assert all(b["start"] >= a["end"] - 1e-6 for a, b in zip(out_words, out_words[1:
 inp, g, v, a = cuts.filter_graph(segs, True, "source.mp4")
 assert "acrossfade=d=0.03" in g and v == "vc" and inp.count("-i") == len(segs) and "[0:v]trim" in g
 print("OK cuts:", len(p), "propuestas,", len(segs), "tramos")
+
+# ajuste al silencio: el borde busca solo hacia el lado que se corta
+import numpy as np
+from megamotor import effects
+sr = 16000
+x = np.full(sr * 3, 0.5, dtype=np.float32)
+x[int(1.40 * sr):int(1.46 * sr)] = 0.0          # pausa antes del corte
+x[int(1.70 * sr):int(1.76 * sr)] = 0.0          # pausa dentro de lo que se conserva: no debe ir ahí
+(s0, e0), (s1, e1) = cuts.snap([(0.0, 1.45), (1.65, 3.0)], x, duration=3.0)
+assert 1.40 <= e0 <= 1.47 and 1.50 <= s1 <= 1.67, (e0, s1)
+cam = effects.dynamic_track([4.0, 10.0], 20.0, [{"start": 12, "end": 14}])
+assert cam[0]["from"] == 1.0 and cam[1]["from"] == 1.10, cam
+assert not any(z["start"] < 14 and z["end"] > 12 for z in cam)
+assert "gte(t" in effects.zoom_expr(cam)
+print("OK snap y cámara dinámica")

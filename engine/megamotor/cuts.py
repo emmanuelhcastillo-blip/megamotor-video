@@ -189,3 +189,31 @@ def load(job_dir):
 
 def save(job_dir, data):
     (pathlib.Path(job_dir) / "cuts.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def snap(segs, pcm, sr=16000, window=0.15, inside=0.02, duration=None):
+    """Mueve cada borde interior al punto más silencioso cercano (ventanas de 20 ms), buscando solo hacia
+    el lado que se corta: el inicio de un tramo puede adelantarse hasta `window` s y entrar como mucho
+    `inside` s; el final, al revés. Así nunca se come el arranque o la cola de una palabra que se conserva
+    (los tiempos de Whisper se solapan entre palabras)."""
+    import numpy as np
+    hop = int(0.02 * sr)
+
+    def quiet(t, lo_t, hi_t):
+        lo, hi = max(0, int(lo_t * sr)), min(len(pcm) - hop, int(hi_t * sr))
+        if hi <= lo:
+            return t
+        best, bt = None, t
+        for i in range(lo, hi, hop // 2):
+            e = float(np.mean(pcm[i:i + hop] ** 2))
+            c = (i + hop / 2) / sr
+            if best is None or e < best * 0.9 or (e <= best * 1.1 and abs(c - t) < abs(bt - t)):
+                best, bt = min(e, best) if best is not None else e, c
+        return round(bt, 3)
+
+    out = []
+    for a, b in segs:
+        na = a if a <= 0.001 else quiet(a, a - window, a + inside)
+        nb = b if duration is not None and b >= duration - 0.001 else quiet(b, b - inside, b + window)
+        out.append((na, nb) if nb - na > 0.05 else (a, b))
+    return out
