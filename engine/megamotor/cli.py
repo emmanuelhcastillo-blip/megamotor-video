@@ -18,6 +18,7 @@ def main(argv=None):
     s = sub.add_parser("render", help="reel 9:16 con subtítulos, duración fiel al original")
     s.add_argument("id"); s.add_argument("--subs", choices=["none", "es", "es-pt"], default="es")
     s.add_argument("--horizontal", action="store_true"); s.add_argument("--crop-x", type=int); s.add_argument("--crf", type=int, default=20)
+    s = sub.add_parser("qa", help="QA automático del reel -> qa_report.json"); s.add_argument("id")
     sub.add_parser("status", help="lista trabajos")
     s = sub.add_parser("approve", help="aprobar para publicar"); s.add_argument("id")
     s = sub.add_parser("publish", help="publicar en Instagram (solo aprobados)"); s.add_argument("id")
@@ -42,7 +43,16 @@ def main(argv=None):
         from . import render
         d = jobs.path(a.id)
         rep = render.render(d, a.subs, not a.horizontal, a.crop_x, crf=a.crf)
-        jobs.write(a.id, status="renderizado"); print(json.dumps(rep, indent=2))
+        jobs.write(a.id, status="renderizado" if rep["qa_ok"] else "qa_fallido"); print(json.dumps(rep, indent=2))
+        from . import qa
+        print(qa.summary(json.loads((d / "qa_report.json").read_text(encoding="utf-8"))))
+        if not rep["qa_ok"]: raise SystemExit("QA en rojo: el reel no pasa al dueño. Revisa qa_report.json.")
+    elif a.cmd == "qa":
+        from . import qa
+        d = jobs.path(a.id)
+        rep = qa.run(d)
+        jobs.write(a.id, status="renderizado" if rep["ok"] else "qa_fallido"); print(qa.summary(rep))
+        if not rep["ok"]: raise SystemExit(1)
     elif a.cmd == "status":
         for j in jobs.list_all(): print(f"{j['id']:<32} {j['status']}")
     elif a.cmd == "approve":

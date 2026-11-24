@@ -29,8 +29,28 @@ r = json.load(open(sys.argv[1] + "/render_report.json"))
 assert r["resolution"] == "1080x1920", r
 assert r["output_seconds"] >= r["source_seconds"] - 0.15, r
 assert r["under_10_min"], r
+assert r["qa_ok"], r
+q = json.load(open(sys.argv[1] + "/qa_report.json"))
+assert q["ok"] and len(q["checks"]) >= 8, q["checks"]
 print("OK render:", r)
 EOF
+
+# QA debe rechazar un reel roto: imagen congelada + negro + audio mudo en medio
+cp "$D/reel.mp4" "$D/reel.ok.mp4"
+ffmpeg -y -v error -i "$D/reel.ok.mp4" \
+  -vf "trim=0:2,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=6.2,drawbox=t=fill:c=black:enable='between(t,5,6.5)'" \
+  -af "volume=enable='between(t,3,6)':volume=0" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -t 8.1 "$D/reel.mp4"
+if python3 -m megamotor qa "$ID"; then echo "FALLO: QA aprobó un reel roto"; exit 1; fi
+python3 - "$D" <<'EOF'
+import json, sys
+q = json.load(open(sys.argv[1] + "/qa_report.json"))
+bad = {c["check"] for c in q["checks"] if not c["ok"]}
+assert {"sin_congelaciones", "sin_negros", "voz_intacta"} <= bad, bad
+print("OK QA rechaza:", sorted(bad))
+EOF
+if python3 -m megamotor approve "$ID" 2>/dev/null; then echo "FALLO: aprobó con QA en rojo"; exit 1; fi
+mv "$D/reel.ok.mp4" "$D/reel.mp4"
+python3 -m megamotor qa "$ID"
 
 # puerta de aprobación: publicar sin aprobar debe fallar
 if python3 -m megamotor publish "$ID" 2>/dev/null; then echo "FALLO: publicó sin aprobar"; exit 1; fi

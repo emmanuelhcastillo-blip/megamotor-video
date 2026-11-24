@@ -4,7 +4,7 @@ import json
 import pathlib
 import time
 
-from . import captions, media
+from . import captions, media, qa
 from .config import env
 
 
@@ -55,5 +55,9 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     report = {"render_seconds": round(secs, 1), "source_seconds": round(info["duration"], 2),
               "output_seconds": round(res["duration"], 2), "size_mb": res["size_mb"],
               "resolution": f"{res['width']}x{res['height']}", "under_10_min": secs < 600}
+    t1 = time.time()
+    rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None)
+    report["qa_ok"] = rq["ok"]
+    report["qa_seconds"] = round(time.time() - t1, 1)
     (job_dir / "render_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report

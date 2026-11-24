@@ -1,6 +1,6 @@
 """Trabajos: una carpeta por video en data/jobs/<id>/ con job.json de estado.
 
-Estados: nuevo -> transcrito -> renderizado -> aprobado -> publicado
+Estados: nuevo -> transcrito -> renderizado (o qa_fallido) -> aprobado -> publicado
 """
 import datetime
 import json
@@ -84,4 +84,7 @@ def approve(job_id):
         raise SystemExit("Falta 'caption' en plan.json: no se puede aprobar sin descripción.")
     if not (path(job_id) / "reel.mp4").exists():
         raise SystemExit("Falta reel.mp4: renderiza antes de aprobar.")
+    qa_file = path(job_id) / "qa_report.json"
+    if not qa_file.exists() or not json.loads(qa_file.read_text(encoding="utf-8")).get("ok"):
+        raise SystemExit("QA en rojo o sin correr (megamotor qa <id>): no se puede aprobar.")
     return write(job_id, status="aprobado", approved_at=datetime.datetime.now().isoformat(timespec="seconds"))
