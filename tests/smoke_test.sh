@@ -127,4 +127,31 @@ EOF
 else
   echo "AVISO: motion/node_modules no existe; se salta el render con Remotion"
 fi
+# sonido: "voz" a ráfagas con pausas reales + ruido de fondo; música bajo la voz; whoosh; música doble prohibida
+V="$MEGAMOTOR_DATA/voz.mp4"
+ffmpeg -y -v error -f lavfi -i testsrc2=size=1920x1080:rate=30:duration=8 \
+  -f lavfi -i "aevalsrc='0.3*sin(2*PI*180*t)*sin(2*PI*3*t)*(between(t,0.4,2.3)+between(t,3,4))':d=8" \
+  -f lavfi -i "anoisesrc=c=pink:a=0.03:d=8" -filter_complex "[1][2]amix=inputs=2:normalize=0[a]" -map 0:v -map "[a]" \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac "$V"
+ID4=$(python3 -m megamotor new "$V" --name sonido | sed -n 1p)
+D4="$MEGAMOTOR_DATA/jobs/$ID4"
+cp "$D/words.json" "$D4/"; mkdir -p "$D4/musica"
+ffmpeg -y -v error -f lavfi -i "aevalsrc='0.2*sin(2*PI*220*t)+0.15*sin(2*PI*277*t)+0.15*sin(2*PI*330*t)':d=3" "$D4/musica/acordes.wav"
+echo '{"caption":"x","sfx":[{"t":2.6,"kind":"whoosh"}],"music":{"file":"musica/acordes.wav"}}' > "$D4/plan.json"
+python3 -m megamotor render "$ID4" --subs es --no-track | tail -1
+python3 - "$D4" <<'EOF'
+import json, sys
+from megamotor import sound
+d = sys.argv[1]
+r = json.load(open(d + "/render_report.json"))
+s = r["sound"]
+assert r["qa_ok"] and s["music"] and s["sfx"] == 1 and s["denoise"] and not s["music_in_source"], r
+x = sound._pcm(d + "/reel.mp4")
+voz, pausa = sound._db(x[int(0.6 * 16000):int(2.0 * 16000)]), sound._db(x[int(5 * 16000):int(7.5 * 16000)])
+assert voz - pausa >= 10, f"la música no queda bajo la voz: voz {voz:.1f} dB, pausa {pausa:.1f} dB"
+print(f"OK sonido: voz {voz:.1f} dB, música en pausa {pausa:.1f} dB, {s}")
+EOF
+cp "$D4/musica/acordes.wav" "$D/acordes.wav"
+echo '{"caption":"x","music":{"file":"acordes.wav"}}' > "$D/plan.json"
+if python3 -m megamotor render "$ID" --subs es 2>/dev/null; then echo "FALLO: añadió música sobre un audio con música"; exit 1; fi
 echo "SMOKE OK"

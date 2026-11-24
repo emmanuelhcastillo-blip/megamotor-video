@@ -18,6 +18,7 @@ SILENCE_MIN = 1.5     # s de silencio nuevo = posible voz perdida
 DARKEN_MAX = 0.85     # brillo medio de salida >= 85 % del original
 CLIP_DB = -0.1        # pico >= -0.1 dBFS = saturación
 DUR_TOL = 0.15        # s
+LUFS, LUFS_TOL = -16.0, 1.5
 
 
 def _ranges(starts, ends, total):
@@ -34,7 +35,7 @@ def analyze(path):
          f"signalstats,metadata=print:key=lavfi.signalstats.YAVG:file='{yavg_file.name}'[v]")
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", pathlib.Path(path).name]
     if info["has_audio"]:
-        a = f"[0:a]volumedetect,silencedetect=noise=-45dB:d={SILENCE_MIN}[a]"
+        a = f"[0:a]volumedetect,silencedetect=noise=-45dB:d={SILENCE_MIN},ebur128=peak=none[a]"
         cmd += ["-filter_complex", f"{v};{a}", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-filter_complex", v, "-map", "[v]"]
@@ -63,6 +64,8 @@ def analyze(path):
         mn = f(r"mean_volume: (-?[\d.]+) dB")
         out["audio_peak_db"] = mx[0] if mx else None
         out["audio_mean_db"] = mn[0] if mn else None
+        lu = re.findall(r"I:\s+(-?[\d.]+) LUFS", log)
+        out["loudness_lufs"] = float(lu[-1]) if lu else None
         out["silences"] = _ranges(f(r"silence_start: (-?[\d.]+)"), f(r"silence_end: ([\d.]+)"), total)
     return out
 
@@ -105,6 +108,8 @@ def check(src, out, expect=(1080, 1920), segs=None, static=()):
         if o["has_audio"]:
             pk = o.get("audio_peak_db")
             add("sin_saturacion", pk is not None and pk < CLIP_DB, f"pico {pk} dBFS")
+            lu = o.get("loudness_lufs")
+            add("loudness", lu is not None and abs(lu - LUFS) <= LUFS_TOL, f"{lu} LUFS (objetivo {LUFS})")
             ns = _new(o["silences"], s["silences"])
             add("voz_intacta", not ns, ns or "sin silencios nuevos")
     report = {"ok": all(c["ok"] for c in checks), "checks": checks, "source": s, "output": o}

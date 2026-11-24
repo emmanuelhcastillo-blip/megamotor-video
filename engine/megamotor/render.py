@@ -4,7 +4,7 @@ import json
 import pathlib
 import time
 
-from . import captions, cuts, effects, media, motion, qa, reframe
+from . import captions, cuts, effects, media, motion, qa, reframe, sound
 from .config import env
 
 
@@ -98,8 +98,13 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         graph.append(f"[{vcur}]ass=subs.ass[vout]")
     else:
         graph.append(f"[{vcur}]null[vout]")
+    srep = {}
     if info["has_audio"]:
-        graph.append(f"[{ain}]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+        an = sound.run(job_dir, all_words)
+        parts, extra, srep = sound.audio_graph(job_dir, ain, plan, an, segs, inputs.count("-i"))
+        inputs += extra
+        graph += parts
+        srep["music_in_source"] = an.get("music_likely")
 
     cmd = ["ffmpeg", "-y", "-v", "error"] + inputs + ["-filter_complex", ";".join(graph), "-map", "[vout]"]
     if info["has_audio"]:
@@ -124,7 +129,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
               "cut_seconds": round(info["duration"] - expected, 2),
               "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
-              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems),
+              "zooms": len(zooms), "pip": len(pips), "motion": len(mitems), "sound": srep,
               "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}
     t1 = time.time()
     rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None, segs=segs or [],
