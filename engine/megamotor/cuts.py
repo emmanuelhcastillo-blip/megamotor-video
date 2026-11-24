@@ -156,17 +156,18 @@ def remap_segments(segments, segs):
     return out
 
 
-def filter_graph(segs, has_audio, src_name):
+def filter_graph(segs, has_audio, src_name, xfades=None):
     """Una entrada por tramo con búsqueda precisa (-ss/-t antes de -i) y concat.
     No se usa trim sobre una sola entrada: ffmpeg encolaría los fotogramas decodificados de los tramos
     que concat aún no lee y con varios cortes se queda sin memoria.
     Devuelve (entradas, grafo, etiqueta_video, etiqueta_audio); las entradas van primero (índices 0..n-1)."""
     inputs, parts = [], []
     n = len(segs)
+    xf = list(xfades) if xfades else [XFADE] * max(0, n - 1)  # un fundido por unión
     for k, (a, b) in enumerate(segs):
         last = k == n - 1
-        # el audio necesita XFADE s extra para que el crossfade no acorte el audio frente al video
-        dur = b - a if last or not has_audio else b - a + XFADE
+        # el audio necesita el fundido extra para que el crossfade no acorte el audio frente al video
+        dur = b - a if last or not has_audio else b - a + xf[k]
         inputs += ["-ss", f"{a:.3f}", "-t", f"{dur:.3f}", "-i", src_name]
         parts.append(f"[{k}:v]trim=duration={b - a:.3f},setpts=PTS-STARTPTS[v{k}]")
         if has_audio:
@@ -176,7 +177,7 @@ def filter_graph(segs, has_audio, src_name):
     if has_audio:
         cur = "a0"
         for k in range(1, n):
-            parts.append(f"[{cur}][a{k}]acrossfade=d={XFADE}:c1=tri:c2=tri[ax{k}]")
+            parts.append(f"[{cur}][a{k}]acrossfade=d={xf[k - 1]:.3f}:c1=tri:c2=tri[ax{k}]")
             cur = f"ax{k}"
         alab = cur
     return inputs, ";".join(parts), "vc", alab
@@ -216,4 +217,53 @@ def snap(segs, pcm, sr=16000, window=0.15, inside=0.02, duration=None):
         na = a if a <= 0.001 else quiet(a, a - window, a + inside)
         nb = b if duration is not None and b >= duration - 0.001 else quiet(b, b - inside, b + window)
         out.append((na, nb) if nb - na > 0.05 else (a, b))
+    return out
+
+
+def digital_gaps(pcm, sr=16000, min_len=0.06, db=-80):
+    """Huecos de silencio digital (restos de una edición previa): en un reel suenan a caída de audio."""
+    import numpy as np
+    hop = int(0.02 * sr)
+    n = len(pcm) // hop
+    if n == 0:
+        return []
+    e = 20 * np.log10(np.sqrt((pcm[: n * hop].reshape(n, hop) ** 2).mean(axis=1)) + 1e-9)
+    out, i = [], 0
+    while i < n:
+        if e[i] < db:
+            j = i
+            while j < n and e[j] < db:
+                j += 1
+            if (j - i) * 0.02 >= min_len:
+                out.append((round(i * 0.02, 3), round(j * 0.02, 3)))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def xfade_for(segs, pcm, sr=16000, quiet_db=-30, short=XFADE, long=0.08):
+    """Fundido por unión: corto si el corte cae en silencio, más largo si cae en mitad del habla."""
+    import numpy as np
+
+    def db(t):
+        s = pcm[max(0, int(t * sr)): int((t + 0.03) * sr)]
+        return 20 * np.log10(np.sqrt(np.mean(s * s)) + 1e-9) if len(s) else -120
+
+    return [long if max(db(b0 - 0.03), db(a1)) > quiet_db else short for (a0, b0), (a1, b1) in zip(segs, segs[1:])]
+
+
+def subtract(segs, holes, min_len=0.12):
+    """Quita los huecos de los tramos (cada tramo puede partirse)."""
+    out = []
+    for a, b in segs:
+        cur = a
+        for h0, h1 in sorted(holes):
+            if h1 <= cur or h0 >= b:
+                continue
+            if h0 - cur >= min_len:
+                out.append((round(cur, 3), round(h0, 3)))
+            cur = max(cur, h1)
+        if b - cur >= min_len:
+            out.append((round(cur, 3), round(b, 3)))
     return out

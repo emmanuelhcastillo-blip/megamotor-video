@@ -38,3 +38,16 @@ assert cam[0]["from"] == 1.0 and cam[1]["from"] == 1.10, cam
 assert not any(z["start"] < 14 and z["end"] > 12 for z in cam)
 assert "gte(t" in effects.zoom_expr(cam)
 print("OK snap y cámara dinámica")
+
+# huecos de silencio digital: se detectan y se restan de los tramos
+y = np.full(sr * 2, 0.3, dtype=np.float32)
+y[int(0.80 * sr):int(1.10 * sr)] = 0.0
+g = cuts.digital_gaps(y)
+assert g and abs(g[0][0] - 0.80) < 0.03 and abs(g[0][1] - 1.10) < 0.03, g
+assert cuts.subtract([(0.0, 2.0)], g) == [(0.0, g[0][0]), (g[0][1], 2.0)]
+assert cuts.xfade_for([(0.0, 0.5), (1.5, 2.0)], y) == [0.08]            # unión en mitad del habla
+assert cuts.xfade_for([(0.0, 0.85), (1.05, 2.0)], y) == [cuts.XFADE]    # unión en silencio
+cam2 = effects.dynamic_track([5.0], 20.0, [])
+assert all(z["from"] == z["to"] for z in cam2 if "from" in z), "sin empuje continuo (temblaba)"
+assert any(z.get("ramp") == 0.8 for z in cam2), "plano largo: acercamiento suave"
+print("OK huecos, fundidos y cámara sin temblor")

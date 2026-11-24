@@ -4,7 +4,7 @@
 - "pip":   [{"start": 8.0, "end": 11.0, "image": "img/foto.jpg", "circle": true}]
   la imagen ocupa la pantalla (paneo lento) y la persona sigue hablando en un círculo; "circle": false = sin
   círculo (máx. 3,5 s). Imágenes reales, sin repetir.
-- "dynamic": true   cámara con ritmo de reel (cortes de zoom en cada corte y cada ~4 s, empuje lento).
+- "dynamic": true   cámara con ritmo de reel: corte de zoom en cada corte real y acercamiento suave en planos largos.
 - "teaser": {"start": 119.5, "end": 125.0, "text": "opcional"} o {"parts": [[a, b], [c, d]], ...}  la frase más fuerte se repite al principio como gancho
   (se añade, no se quita nada); entra con barrido y whoosh si la capa de motion está instalada.
 - "color": "natural" | "pop" | {"contrast":1.1,"saturation":1.3,"gamma":0.98,"warmth":0.03,"vignette":true}
@@ -74,20 +74,19 @@ def zoom_expr(zooms):
     return "1+" + "+".join(terms) if terms else "1"
 
 
-def dynamic_track(joins, total, explicit, every=4.0, level=1.10, drift=0.035, min_len=0.6):
-    """Cámara con ritmo de reel: en cada unión (corte) y cada ~`every` s en tramos largos alterna
-    plano abierto / cerrado con un corte de zoom seco, y dentro de cada plano un empuje lento.
-    Respeta los zooms de énfasis explícitos (no se pisa con ellos). Todo en tiempo de salida."""
-    marks = sorted({0.0, total, *[j for j in joins if 0 < j < total]})
-    cuts_at = []
-    for a, b in zip(marks, marks[1:]):
-        n = max(1, round((b - a) / every))
-        cuts_at += [a + (b - a) * k / n for k in range(n)]
-    cuts_at = sorted(set(round(c, 3) for c in cuts_at)) + [total]
+def dynamic_track(joins, total, explicit, level=1.10, long_shot=7.0, push=1.06, min_len=0.6):
+    """Cámara con ritmo de reel, solo con intención:
+    - en cada corte real (uniones del montaje y cortes de la edición previa) alterna plano abierto / cerrado
+      con un corte de zoom seco: disimula el salto de imagen;
+    - dentro de un plano el encuadre no se mueve (un empuje continuo escala 2 px por fotograma y tiembla);
+    - en planos de más de `long_shot` s, un acercamiento suave a mitad de plano (entra y sale en 0,8 s).
+    Respeta los zooms de énfasis explícitos. Todo en tiempo de salida."""
+    marks = sorted({0.0, round(total, 3), *[round(j, 3) for j in joins if 0.3 < j < total - 0.3]})
     busy = sorted((z["start"], z["end"]) for z in explicit)
     out, lv = [], 0
-    for a, b in zip(cuts_at, cuts_at[1:]):
-        # restar los tramos con zoom explícito
+    for a, b in zip(marks, marks[1:]):
+        if b - a < 0.25:
+            continue
         pieces, cur = [], a
         for za, zb in busy:
             if zb <= cur or za >= b:
@@ -100,7 +99,10 @@ def dynamic_track(joins, total, explicit, every=4.0, level=1.10, drift=0.035, mi
         base = level if lv % 2 else 1.0
         for pa, pb in pieces:
             if pb - pa >= min_len:
-                out.append({"start": round(pa, 3), "end": round(pb, 3), "from": base, "to": round(base + drift, 3)})
+                out.append({"start": round(pa, 3), "end": round(pb, 3), "from": base, "to": base})
+                if pb - pa >= long_shot:
+                    mid = (pa + pb) / 2
+                    out.append({"start": round(mid - 1.8, 3), "end": round(mid + 1.8, 3), "scale": push, "ramp": 0.8})
         lv += 1
     return out
 

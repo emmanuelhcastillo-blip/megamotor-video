@@ -33,6 +33,13 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         if segs:
             segs = cuts.snap(segs, pcm, duration=info["duration"])
         teaser = cuts.snap(teaser, pcm, duration=info["duration"])
+        if plan.get("tighten") and (segs or teaser):
+            # quitar los silencios digitales de la edición previa DESPUÉS del ajuste (si no, el ajuste
+            # vuelve a meter el borde en el hueco, que es lo más silencioso que encuentra)
+            gaps = cuts.digital_gaps(pcm, min_len=0.03)
+            if segs:
+                segs = cuts.subtract(segs, gaps)
+            teaser = cuts.subtract(teaser, gaps)
     body = segs  # tramos del cuerpo (None = el original entero)
     T = round(sum(b - a for a, b in teaser), 3)
     if teaser:
@@ -43,7 +50,8 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     fps = min(round(info["fps"]), 30)
     graph = []
     if segs:
-        inputs, g, vin, ain = cuts.filter_graph(segs, info["has_audio"], src.name)
+        xf = cuts.xfade_for(segs, pcm) if pcm is not None else None
+        inputs, g, vin, ain = cuts.filter_graph(segs, info["has_audio"], src.name, xf)
         graph.append(g)
     else:
         inputs = ["-i", src.name]
@@ -80,6 +88,12 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
             for a, b in (segs or []):
                 acc += b - a
                 joins.append(round(acc, 3))
+            if pcm is None and info["has_audio"]:
+                pcm = sound._pcm(src)
+            # los cortes de la edición previa también son cambios de plano (si siguen dentro)
+            for g0, g1 in (cuts.digital_gaps(pcm) if pcm is not None else []):
+                m = [cuts.map_time(g0, body)] if body else [g0]
+                joins += [round(t + T, 3) for t in m if t is not None]
             cam = effects.dynamic_track(joins, expected, zooms)
         if zooms or cam:
             # fuera de los zooms el tamaño no cambia y el escalado no trabaja
