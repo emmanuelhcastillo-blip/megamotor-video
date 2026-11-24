@@ -10,7 +10,7 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
-from . import media
+from . import cuts, media
 
 FREEZE_MIN = 2.0      # s de imagen congelada para considerarlo fallo
 BLACK_MIN = 0.5       # s de negro
@@ -73,17 +73,23 @@ def _new(out_ranges, src_ranges, tol=0.5):
             if not any(r[0] < s[1] + tol and s[0] - tol < r[1] for s in src_ranges)]
 
 
-def check(src, out, expect=(1080, 1920)):
+def check(src, out, expect=(1080, 1920), segs=None):
     with ThreadPoolExecutor(2) as ex:
         fs, fo = ex.submit(analyze, src), ex.submit(analyze, out)
         s, o = fs.result(), fo.result()
     checks = []
+    expected = s["duration"]
+    if segs:  # cortes aprobados: los tramos del original se llevan al tiempo de la salida
+        expected = round(sum(b - a for a, b in segs), 2)
+        for k in ("freezes", "blacks", "silences"):
+            if k in s:
+                s[k] = [m for r in s[k] for m in cuts.map_range(r, segs)]
 
     def add(name, ok, detail):
         checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
-    add("duracion", o["duration"] >= s["duration"] - DUR_TOL,
-        f"salida {o['duration']}s vs original {s['duration']}s")
+    add("duracion", o["duration"] >= expected - DUR_TOL,
+        f"salida {o['duration']}s vs esperado {expected}s" + (f" (original {s['duration']}s, cortes aprobados)" if segs else ""))
     if expect:
         add("resolucion", (o["width"], o["height"]) == tuple(expect), f"{o['width']}x{o['height']}")
     nf = _new(o["freezes"], s["freezes"])
@@ -105,10 +111,15 @@ def check(src, out, expect=(1080, 1920)):
     return report
 
 
-def run(job_dir, out_name="reel.mp4", expect=(1080, 1920)):
+def run(job_dir, out_name="reel.mp4", expect=(1080, 1920), segs=None):
     job_dir = pathlib.Path(job_dir)
     src = next(job_dir.glob("source.*"))
-    rep = check(src, job_dir / out_name, expect)
+    if segs is None:
+        rr = job_dir / "render_report.json"
+        c = cuts.load(job_dir)
+        if rr.exists() and json.loads(rr.read_text(encoding="utf-8")).get("cuts_applied") and c:
+            segs = cuts.keeps(c["cuts"], media.probe(src)["duration"])
+    rep = check(src, job_dir / out_name, expect, segs)
     (job_dir / "qa_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     return rep
 

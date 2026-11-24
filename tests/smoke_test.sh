@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/engine"
 export MEGAMOTOR_DATA="$(mktemp -d)"
+trap 'rm -rf "$MEGAMOTOR_DATA"' EXIT
 T="$MEGAMOTOR_DATA/prueba.mp4"
 
 ffmpeg -y -v error -f lavfi -i testsrc2=size=1920x1080:rate=30:duration=8 \
@@ -64,4 +65,29 @@ python3 -m megamotor qa "$ID"
 if python3 -m megamotor publish "$ID" 2>/dev/null; then echo "FALLO: publicó sin aprobar"; exit 1; fi
 python3 -m megamotor approve "$ID"
 python3 -m megamotor status
+# cortes: sin aprobación del dueño no se corta; con aprobación, audio y video siguen en sincronía
+ID2=$(python3 -m megamotor new "$T" --name cortes | sed -n 1p)
+D2="$MEGAMOTOR_DATA/jobs/$ID2"
+cp "$D/words.json" "$D/plan.json" "$D2/"
+python3 -m megamotor cuts "$ID2" >/dev/null
+python3 - "$D2" <<'EOF'
+import json, sys
+f = sys.argv[1] + "/cuts.json"; c = json.load(open(f))
+c["cuts"] += [{"start": 1.0, "end": 1.5, "kind": "prueba", "text": "", "confidence": "alta", "apply": False},
+              {"start": 2.4, "end": 2.9, "kind": "prueba", "text": "", "confidence": "alta", "apply": False}]
+json.dump(c, open(f, "w"))
+EOF
+python3 -m megamotor cuts "$ID2" --select alta
+if python3 -m megamotor render "$ID2" --subs es-pt --apply-cuts 2>/dev/null; then echo "FALLO: cortó sin aprobación"; exit 1; fi
+python3 -m megamotor cuts "$ID2" --approve >/dev/null
+python3 -m megamotor render "$ID2" --subs es-pt --apply-cuts | tail -12
+python3 - "$D2" <<'EOF'
+import json, subprocess, sys
+r = json.load(open(sys.argv[1] + "/render_report.json"))
+assert r["qa_ok"] and r["cuts_applied"] == 3 and abs(r["cut_seconds"] - 4.75) < 0.05, r
+d = lambda s: float(subprocess.run(["ffprobe", "-v", "error", "-select_streams", s, "-show_entries", "stream=duration",
+    "-of", "csv=p=0", sys.argv[1] + "/reel.mp4"], capture_output=True, text=True).stdout)
+assert abs(d("v") - d("a")) < 0.1 and abs(d("v") - 3.25) < 0.15, (d("v"), d("a"))
+print("OK cortes aprobados:", r)
+EOF
 echo "SMOKE OK"
