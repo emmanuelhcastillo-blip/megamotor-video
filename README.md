@@ -21,11 +21,15 @@ python3 -m megamotor ui         # revisar y aprobar en http://127.0.0.1:8765
 ```
 
 ## Qué hay
-- Núcleo en Python (solo `requests` + ffmpeg), pensado para 2 CPU y render de menos de 10 minutos.
-- Subtítulos karaoke ES arriba y PT abajo, reencuadre 9:16, volumen normalizado, duración fiel al original.
-- Interfaz local de aprobación. Publicación por la API oficial de Instagram con puerta de aprobación.
-- Guía para Claude Code en `CLAUDE.md` y la skill `.claude/skills/megamotor`.
-- Catálogo de repos open source a integrar en `docs/CATALOGO-REPOS.md`.
+- Núcleo en Python + ffmpeg, pensado para 2 CPU y render de menos de 10 minutos (`docs/LIMITES.md`).
+- QA automático de salida (`qa_report.json`): congelaciones, negros, oscurecido, picos, silencios nuevos, loudness, duración.
+- Cortes propuestos (silencios, muletillas, tartamudeos, tomas repetidas) que solo se aplican con aprobación.
+- Reencuadre 9:16 con seguimiento de cara (OpenCV), zoom de énfasis y recorte circular (pip).
+- Capa de motion con Remotion (`motion/`): titulares, cifras, tipografía cinética, barridos.
+- Sonido: -16 LUFS, reducción de ruido suave, efectos sintetizados y música con ducking (solo si no trae).
+- Selector de clips para videos largos. Publicación con chequeo previo, borradores de respuestas y métricas.
+- Guía para Claude Code en `CLAUDE.md` y la skill `.claude/skills/megamotor`. Créditos en `docs/CREDITOS.md`.
 
 ## Estado
-v0.1: núcleo, interfaz y pruebas de humo funcionando. La publicación en Instagram está escrita pero **sin probar contra Meta**. Hoja de ruta en `CLAUDE.md`.
+v0.2: las 8 fases de `docs/MISION-CODE.md` implementadas y con prueba automática (`tests/smoke_test.sh`).
+Pendiente: probar con la cuenta real de Instagram y con videos reales del dueño.

@@ -18,7 +18,9 @@ Eres director artístico con formación en edición, artes visuales, sonido y pr
 8. **Cierre:** llamada a la acción clara, sin corte brusco.
 
 ## Cómo medir
-- `render_report.json` (duración, resolución, tiempo de render).
+- `qa_report.json` primero: si está en ROJO no se entrega; corrige la causa (no los umbrales).
+- `render_report.json` (duración, resolución, tiempo de render, reencuadre, efectos, sonido).
+- `reframe.json` (`face_ratio`: si es bajo, el encuadre quedó centrado; revisa fotogramas o usa `--crop-x`).
 - `ffmpeg -i reel.mp4 -vf "select='eq(n\,0)+gt(scene\,0.35)',showinfo" -f null -` para listar cortes.
 - Extrae fotogramas con `ffmpeg -ss <t> -i reel.mp4 -frames:v 1 f.jpg` y míralos.
 

@@ -12,14 +12,29 @@ Claves en `.env` (copia `.env.example`). Cómo conseguirlas gratis: `docs/APIS-G
 
 ## Flujo de un reel
 1. `python3 -m megamotor new video.mp4 --name tema` → crea `data/jobs/<id>/`.
+   Video largo: `transcribe`, luego `clips <id>` (candidatos por gancho/cierre/autonomía en `clips.json`); **tú lees
+   el texto de cada uno**, recomiendas, el dueño elige y `clip-new <id> <n>` crea el trabajo del clip.
 2. `transcribe <id>` → `words.json` (Groq gratis; `--local` usa faster-whisper).
 3. **Tú lees `words.json`** y escribes `data/jobs/<id>/plan.json`:
    `{"hook": "...", "caption": "...", "hashtags": ["#..."], "pt_segments": [{"start":0,"end":2,"text":"..."}]}`
    La descripción sale de lo que se dice en el video, con voz del autor, sin sonar a IA.
-4. `render <id> --subs es-pt` → `reel.mp4` 1080x1920 + `cover.jpg` + `render_report.json`.
-5. Revisa el resultado como director artístico (ver `.claude/skills/megamotor/SKILL.md`). Si falla, corrige y re-renderiza.
-6. El dueño revisa en `python3 -m megamotor ui` y aprueba (o `approve <id>`).
-7. `publish <id>` solo funciona con estado `aprobado`. Los comentarios: tú redactas `replies.json`, él marca `approved: true`, luego `replies <id>`.
+   Opcional, con medida (tiempos del original, nada superpuesto):
+   - `"zooms": [{"start","end","scale":1.12}]` zoom de énfasis.
+   - `"pip": [{"start","end","image":"img/x.jpg","circle":true}]` imagen real a pantalla completa con la persona en círculo
+     (máx. 6 s; sin círculo máx. 3,5 s; sin repetir imágenes). Las imágenes van dentro del trabajo.
+   - `"motion": [{"start","end","kind":"titular|cifra|cinetica|barrido", ...}]` (Remotion, `cd motion && npm install`).
+     Sin emojis. La cinética toma las palabras de `words.json`.
+   - `"sfx": [{"t","kind":"whoosh|pop|click|riser"}]` y `"music": {"file":"musica/x.mp3"}` (solo si el original no trae).
+4. Cortes (opcional): `cuts <id>` propone silencios, muletillas, tartamudeos y tomas repetidas en `cuts.json`.
+   **No se corta nada** salvo que el dueño lo pida para ese video: `cuts <id> --select alta|0,3`, él aprueba
+   (`cuts <id> --approve`) y se renderiza con `--apply-cuts`.
+5. `render <id> --subs es-pt` → `reel.mp4` 1080x1920 (seguimiento de cara si hay OpenCV; `--no-track` lo apaga)
+   + `cover.jpg` + `render_report.json` + `qa_report.json`. Si el QA sale en rojo el reel no pasa al dueño.
+6. Revisa el resultado como director artístico (ver `.claude/skills/megamotor/SKILL.md`): fotogramas a ojo.
+7. El dueño revisa en `python3 -m megamotor ui` y aprueba (o `approve <id>`; exige QA en verde).
+8. `publish <id> --check` (no publica) y luego `publish <id>` solo con estado `aprobado`.
+   Comentarios: `comments <id> --draft`, tú redactas `text` en `replies.json`, él marca `approved: true`, `replies <id>`.
+   Métricas: `insights <id>` y `performance` (retención por gancho) para afinar la fórmula.
 
 ## Reglas duras (no negociables)
 - **Nunca** recortar, tapar ni degradar la voz del autor. **Nunca** dejar el reel más corto que el original (el render lo comprueba y falla).
@@ -37,9 +52,8 @@ Claves en `.env` (copia `.env.example`). Cómo conseguirlas gratis: `docs/APIS-G
 - `data/` (ignorado por git) trabajos y videos.
 
 ## Pendiente (hoja de ruta, en orden)
-1. Probar `publish.py` con una cuenta real (no se ha probado contra Meta).
-2. Reencuadre con seguimiento de cara (mediapipe/OpenCV) en vez de recorte centrado (`--crop-x` hoy es manual).
-3. Remotion para motion graphics y tipografía cinética en cortes; integrar `remotion-dev/skills`.
-4. Detección de silencios → propuesta de cortes que **tú** decides (hoy solo informa).
-5. Selector de clips para videos largos (ranking por gancho) al estilo AutoClip/OpenShorts.
-6. Análisis de rendimiento (alcance, retención) para afinar la fórmula de gancho.
+1. Probar `publish.py` con la cuenta real (`publish --check` primero). Probado solo contra un Graph API simulado.
+2. Validar todo con videos reales del dueño (hasta ahora: videos sintéticos y fotos de prueba). Afinar umbrales de
+   `qa.py`, `sound.py` (detección de música) y `clips.py` con esos videos.
+3. Reencuadre: Haar de OpenCV es básico; probar un detector mejor (YuNet, MIT) si falla con caras de perfil o poca luz.
+4. Imágenes reales para `pip`: hoy las pone el dueño o Claude a mano dentro del trabajo; falta un buscador con licencia.
