@@ -29,7 +29,7 @@ def _ranges(starts, ends, total):
 def video_tap(yavg_name):
     """Cadena de filtros que mide congelaciones, negros y brillo. Se usa sobre un archivo o como rama
     dentro del propio render (así la salida no se vuelve a decodificar)."""
-    return (f"scale=320:-2,freezedetect=n=-60dB:d={FREEZE_MIN},blackdetect=d={BLACK_MIN}:pix_th=0.10,"
+    return (f"scale=320:-2,format=yuv420p,freezedetect=n=-60dB:d={FREEZE_MIN},blackdetect=d={BLACK_MIN}:pix_th=0.10,"
             f"signalstats,metadata=print:key=lavfi.signalstats.YAVG:file='{yavg_name}'")
 
 

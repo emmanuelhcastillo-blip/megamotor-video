@@ -77,6 +77,10 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     all_words = json.loads(words_file.read_text(encoding="utf-8"))["words"] if words_file.exists() else []
     mitems = effects._to_out(motion.validate(plan.get("motion"), all_words), body, T)
     out_sfx = []
+    if tz and tz.get("text"):
+        # titular del gancho, en tiempo de salida (el teaser no existe en el original)
+        mitems += motion.validate([{"start": 0.15, "end": round(min(T - 0.35, 4.0), 3), "kind": "titular",
+                                    "text": tz["text"]}])
     if tz and tz.get("transition", True) and (motion.MOTION_DIR / "node_modules").exists():
         # el teaser entra al cuerpo con un barrido y un whoosh (muy por debajo de la voz)
         mitems.append({"start": round(T - 0.25, 3), "end": round(T + 0.25, 3), "kind": "barrido"})

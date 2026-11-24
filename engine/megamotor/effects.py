@@ -4,7 +4,7 @@
 - "pip":   [{"start": 8.0, "end": 11.0, "image": "img/foto.jpg", "circle": true}]
   la imagen ocupa la pantalla (paneo lento) y la persona sigue hablando en un círculo; "circle": false = sin
   círculo (máx. 3,5 s). Imágenes reales, sin repetir.
-- "teaser": {"start": 119.5, "end": 125.0}  la frase más fuerte se repite al principio como gancho
+- "teaser": {"start": 119.5, "end": 125.0, "text": "opcional"}  la frase más fuerte se repite al principio como gancho
   (se añade, no se quita nada); entra con barrido y whoosh si la capa de motion está instalada.
 - "color": "natural" | "pop" | {"contrast":1.1,"saturation":1.3,"gamma":0.98,"warmth":0.03,"vignette":true}
   corrección de color sobre la persona (no sobre las imágenes del pip ni los gráficos).
@@ -144,7 +144,7 @@ def pip_graph(base, pips, first_input, fps, box=None):
 COLOR_PRESETS = {
     "natural": {"contrast": 1.06, "saturation": 1.2, "gamma": 1.0, "warmth": 0.0, "vignette": False},
     # para material plano o lavado: más contraste y color, sombras algo frías y altas cálidas, viñeta suave
-    "pop": {"contrast": 1.12, "saturation": 1.45, "gamma": 0.97, "warmth": 0.03, "vignette": True},
+    "pop": {"contrast": 1.12, "saturation": 1.45, "gamma": 1.02, "warmth": 0.03, "vignette": True},
 }
 
 
@@ -156,9 +156,11 @@ def grade(spec):
     if not (0.8 <= c["contrast"] <= 1.4 and 0.5 <= c["saturation"] <= 2.0 and 0.8 <= c["gamma"] <= 1.2):
         raise SystemExit(f"color fuera de rango: {c}")
     w = float(c.get("warmth", 0))
-    f = [f"eq=contrast={c['contrast']}:saturation={c['saturation']}:gamma={c['gamma']}"]
+    # calidez con gamma por canal dentro de eq (tabla, barato); colorbalance costaba ~0,8 s por segundo de video
+    eq = f"eq=contrast={c['contrast']}:saturation={c['saturation']}:gamma={c['gamma']}"
     if w:
-        f.append(f"colorbalance=rs={-w:.3f}:bs={w:.3f}:rm={w * 0.6:.3f}:rh={w:.3f}:bh={-w:.3f}")
+        eq += f":gamma_r={1 + w:.3f}:gamma_b={1 - w:.3f}"
+    f = [eq]
     if c.get("vignette"):
-        f.append("vignette=PI/5")
+        f.append("vignette=PI/9")  # suave: PI/5 oscurecía un 24 % y el QA lo rechazaba
     return ",".join(f)

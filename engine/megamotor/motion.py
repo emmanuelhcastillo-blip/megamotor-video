@@ -115,7 +115,8 @@ def render_clips(job_dir, items):
 def overlay_graph(base, items, paths, first_input):
     parts, cur = [], base
     for k, (it, _) in enumerate(zip(items, paths)):
-        parts.append(f"[{first_input + k}:v]setpts=PTS-STARTPTS+{it['start']:.3f}/TB[mo{k}]")
-        parts.append(f"[{cur}][mo{k}]overlay=eof_action=pass:format=auto[mv{k}]")
+        # yuva420p + overlay en yuv420: si no, el video entero pasa a 12 bits 4:4:4 (más lento y mide mal el QA)
+        parts.append(f"[{first_input + k}:v]format=yuva420p,setpts=PTS-STARTPTS+{it['start']:.3f}/TB[mo{k}]")
+        parts.append(f"[{cur}][mo{k}]overlay=eof_action=pass:format=yuv420[mv{k}]")
         cur = f"mv{k}"
     return parts, cur

@@ -51,8 +51,14 @@ Style: PT,{font},{int(size*0.7)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
-    for g in group_words(words):
+    groups = group_words(words)
+    for k, g in enumerate(groups):
         start, end = g[0]["start"], g[-1]["end"] + 0.05
+        if k + 1 < len(groups):
+            # Whisper a veces solapa tiempos: dos frases a la vez se apilan y se leen desordenadas
+            end = min(end, groups[k + 1][0]["start"])
+        if end - start < 0.1:
+            end = start + 0.1
         parts = []
         for w in g:
             dur = max(1, int(round((w["end"] - w["start"]) * 100)))
