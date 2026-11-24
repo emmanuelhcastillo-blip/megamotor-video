@@ -25,6 +25,11 @@ def main(argv=None):
     s.add_argument("--apply-cuts", action="store_true", help="aplica cuts.json (exige aprobación del dueño)")
     s.add_argument("--no-track", action="store_true", help="sin seguimiento de cara: recorte centrado")
     s = sub.add_parser("qa", help="QA automático del reel -> qa_report.json"); s.add_argument("id")
+    s = sub.add_parser("clips", help="video largo: propone clips por gancho, cierre y autonomía -> clips.json")
+    s.add_argument("id"); s.add_argument("--min", type=float, default=20); s.add_argument("--max", type=float, default=60)
+    s.add_argument("--n", type=int, default=5)
+    s = sub.add_parser("clip-new", help="crea un trabajo nuevo con el clip elegido (rango 1..n)")
+    s.add_argument("id"); s.add_argument("rank", type=int); s.add_argument("--name")
     sub.add_parser("status", help="lista trabajos")
     s = sub.add_parser("approve", help="aprobar para publicar"); s.add_argument("id")
     s = sub.add_parser("publish", help="publicar en Instagram (solo aprobados)"); s.add_argument("id")
@@ -81,6 +86,29 @@ def main(argv=None):
         rep = qa.run(d)
         jobs.write(a.id, status="renderizado" if rep["ok"] else "qa_fallido"); print(qa.summary(rep))
         if not rep["ok"]: raise SystemExit(1)
+    elif a.cmd == "clips":
+        from . import clips
+        d = jobs.path(a.id)
+        if not (d / "words.json").exists(): raise SystemExit("No hay words.json. Corre primero: megamotor transcribe <id>")
+        res = clips.run(d, a.min, a.max, a.n)
+        for c in res["candidates"]:
+            print(f"#{c['rank']} {c['start']:8.2f}-{c['end']:8.2f} ({c['duration']:.0f}s) nota {c['score']:5.2f} {c['detalle']}")
+            print(f"     gancho: {c['gancho'][:100]}")
+            print(f"     cierre: …{c['cierre'][-100:]}")
+        if not res["candidates"]: print("Sin candidatos en ese rango de duración.")
+    elif a.cmd == "clip-new":
+        from . import clips
+        import tempfile, pathlib
+        d = jobs.path(a.id)
+        with tempfile.TemporaryDirectory() as tmp:
+            f = pathlib.Path(tmp) / f"{a.id}-clip{a.rank}.mkv"
+            c, words = clips.extract(d, a.rank, f)
+            jid = jobs.create(f, a.name or f"{a.id}-clip{a.rank}")
+        nd = jobs.path(jid)
+        (nd / "words.json").write_text(json.dumps({"engine": "recorte", "language": "es", "words": words,
+                                                   "text": " ".join(w["word"] for w in words)}, ensure_ascii=False, indent=2), encoding="utf-8")
+        jobs.write(jid, status="transcrito", parent=a.id, parent_range=[c["start"], c["end"]])
+        print(jid)
     elif a.cmd == "status":
         for j in jobs.list_all(): print(f"{j['id']:<32} {j['status']}")
     elif a.cmd == "approve":

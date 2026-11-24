@@ -26,6 +26,7 @@ EOF
 python3 tests/test_cuts.py
 python3 tests/test_reframe.py
 python3 tests/test_motion.py
+python3 tests/test_clips.py
 python3 -m megamotor cuts "$ID"
 python3 - "$D" <<'EOF'
 import json, sys
@@ -154,4 +155,17 @@ EOF
 cp "$D4/musica/acordes.wav" "$D/acordes.wav"
 echo '{"caption":"x","music":{"file":"acordes.wav"}}' > "$D/plan.json"
 if python3 -m megamotor render "$ID" --subs es 2>/dev/null; then echo "FALLO: añadió música sobre un audio con música"; exit 1; fi
+# selector de clips: proponer, crear trabajo desde el elegido y renderizarlo
+python3 -m megamotor clips "$ID" --min 1 --max 5 --n 2
+CID=$(python3 -m megamotor clip-new "$ID" 1 | tail -1)
+python3 -m megamotor render "$CID" --subs es | tail -1
+python3 - "$MEGAMOTOR_DATA/jobs/$CID" <<'EOF'
+import json, sys
+d = sys.argv[1]
+r = json.load(open(d + "/render_report.json")); j = json.load(open(d + "/job.json"))
+w = json.load(open(d + "/words.json"))["words"]
+lo, hi = j["parent_range"]
+assert r["qa_ok"] and abs(r["source_seconds"] - (hi - lo)) < 0.1 and w and w[0]["start"] >= 0, (r, j)
+print("OK clip:", j["parent"], j["parent_range"], r["output_seconds"], "s")
+EOF
 echo "SMOKE OK"
