@@ -150,16 +150,21 @@ def remap_segments(segments, segs):
     return out
 
 
-def filter_graph(segs, has_audio):
-    """filter_complex que recorta y une. Devuelve (grafo, etiqueta_video, etiqueta_audio)."""
-    parts = []
-    for k, (a, b) in enumerate(segs):
-        parts.append(f"[0:v]trim={a}:{b},setpts=PTS-STARTPTS[v{k}]")
-        if has_audio:
-            # se toman XFADE s extra al final para que el crossfade no acorte el audio frente al video
-            last = k == len(segs) - 1
-            parts.append(f"[0:a]atrim={a}:{b if last else b + XFADE},asetpts=PTS-STARTPTS[a{k}]")
+def filter_graph(segs, has_audio, src_name):
+    """Una entrada por tramo con búsqueda precisa (-ss/-t antes de -i) y concat.
+    No se usa trim sobre una sola entrada: ffmpeg encolaría los fotogramas decodificados de los tramos
+    que concat aún no lee y con varios cortes se queda sin memoria.
+    Devuelve (entradas, grafo, etiqueta_video, etiqueta_audio); las entradas van primero (índices 0..n-1)."""
+    inputs, parts = [], []
     n = len(segs)
+    for k, (a, b) in enumerate(segs):
+        last = k == n - 1
+        # el audio necesita XFADE s extra para que el crossfade no acorte el audio frente al video
+        dur = b - a if last or not has_audio else b - a + XFADE
+        inputs += ["-ss", f"{a:.3f}", "-t", f"{dur:.3f}", "-i", src_name]
+        parts.append(f"[{k}:v]trim=duration={b - a:.3f},setpts=PTS-STARTPTS[v{k}]")
+        if has_audio:
+            parts.append(f"[{k}:a]asetpts=PTS-STARTPTS[a{k}]")
     parts.append("".join(f"[v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0[vc]")
     alab = None
     if has_audio:
@@ -168,7 +173,7 @@ def filter_graph(segs, has_audio):
             parts.append(f"[{cur}][a{k}]acrossfade=d={XFADE}:c1=tri:c2=tri[ax{k}]")
             cur = f"ax{k}"
         alab = cur
-    return ";".join(parts), "vc", alab
+    return inputs, ";".join(parts), "vc", alab
 
 
 def load(job_dir):

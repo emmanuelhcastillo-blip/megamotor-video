@@ -97,39 +97,40 @@ def make_masks(job_dir):
 
 def pip_graph(base, pips, first_input, fps, box=None):
     """Grafo de superposición. Entradas desde first_input: máscara, aro y luego una imagen por pip.
-    La imagen hace un paneo lento (alterna dirección) para que nunca quede estática."""
+    La imagen hace un paneo lento (alterna dirección) para que nunca quede estática.
+    Memoria: nada se recorta con trim sobre una rama de la imagen principal (obligaría a encolar
+    fotogramas hasta que empieza el pip). El círculo va al mismo paso que el video y se activa con enable;
+    las imágenes y la máscara se repiten dentro del grafo (loop) bajo demanda."""
     if not pips:
         return [], base
     mi, ri = first_input, first_input + 1
     bx, by, bs = box or FACE_BOX
-    circ = [k for k, p in enumerate(pips) if p.get("circle", True)]
+    circ = [p for p in pips if p.get("circle", True)]
     parts = []
+    cur = base
     if circ:
-        parts += [f"[{base}]split={len(circ) + 1}[pb0]" + "".join(f"[pf{k}]" for k in circ),
-                  f"[{mi}:v]format=gray,split={len(circ)}" + "".join(f"[pm{k}]" for k in circ),
-                  f"[{ri}:v]format=rgba,split={len(circ)}" + "".join(f"[pr{k}]" for k in circ)]
+        parts.append(f"[{base}]split=2[pb0][pf]")
+        parts.append(f"[pf]crop={bs}:{bs}:{bx}:{by},scale={PIP_D}:{PIP_D},format=yuva420p[pc]")
+        parts.append(f"[{mi}:v]format=gray,loop=loop=-1:size=1,fps={fps}[pm]")
+        parts.append(f"[{ri}:v]format=rgba,loop=loop=-1:size=1,fps={fps}[pr]")
+        parts.append("[pc][pm]alphamerge[pa]")
         cur = "pb0"
     else:
         parts += [f"[{mi}:v]nullsink", f"[{ri}:v]nullsink"]
-        cur = base
     for k, p in enumerate(pips):
         a, b = p["start"], p["end"]
         d = b - a
         ii = first_input + 2 + k
-        shift = f"setpts=PTS-STARTPTS+{a:.3f}/TB"
         pan = f"(iw-1080)*t/{d:.3f}" if k % 2 == 0 else f"(iw-1080)*(1-t/{d:.3f})"
+        # una sola imagen (sin -loop en la entrada): se escala una vez y se repite bajo demanda
         parts.append(f"[{ii}:v]scale={int(1080 * PAN)}:{int(1920 * PAN)}:force_original_aspect_ratio=increase,setsar=1,"
-                     f"fps={fps},trim=duration={d:.3f},setpts=PTS-STARTPTS,"
-                     f"crop=1080:1920:x='{pan}':y='(ih-1920)/2',{shift}[pi{k}]")
-        parts.append(f"[{cur}][pi{k}]overlay=eof_action=pass[po{k}a]")
-        if k in circ:
-            parts.append(f"[pf{k}]trim={a:.3f}:{b:.3f},crop={bs}:{bs}:{bx}:{by},scale={PIP_D}:{PIP_D},format=rgba,{shift}[pc{k}]")
-            parts.append(f"[pm{k}]loop=-1:1,trim=duration={d:.3f},fps={fps},{shift}[pmk{k}]")
-            parts.append(f"[pr{k}]loop=-1:1,trim=duration={d:.3f},fps={fps},{shift}[prk{k}]")
-            parts.append(f"[pc{k}][pmk{k}]alphamerge[pa{k}]")
-            parts.append(f"[po{k}a][prk{k}]overlay={PIP_X - 8}:{PIP_Y - 8}:eof_action=pass[po{k}b]")
-            parts.append(f"[po{k}b][pa{k}]overlay={PIP_X}:{PIP_Y}:eof_action=pass[po{k}]")
-        else:
-            parts.append(f"[po{k}a]null[po{k}]")
+                     f"loop=loop=-1:size=1,fps={fps},trim=duration={d:.3f},setpts=PTS-STARTPTS,"
+                     f"crop=1080:1920:x='{pan}':y='(ih-1920)/2',setpts=PTS+{a:.3f}/TB[pi{k}]")
+        parts.append(f"[{cur}][pi{k}]overlay=eof_action=pass[po{k}]")
         cur = f"po{k}"
+    if circ:
+        on = "+".join(f"between(t,{p['start']:.3f},{p['end']:.3f})" for p in circ)
+        parts.append(f"[{cur}][pr]overlay={PIP_X - 8}:{PIP_Y - 8}:enable='{on}':shortest=1[pring]")
+        parts.append(f"[pring][pa]overlay={PIP_X}:{PIP_Y}:enable='{on}':shortest=1[pout]")
+        cur = "pout"
     return parts, cur

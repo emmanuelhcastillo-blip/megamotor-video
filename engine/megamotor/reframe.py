@@ -12,7 +12,6 @@ implementación es propia (ver docs/CREDITOS.md).
 import bisect
 import json
 import pathlib
-import subprocess
 
 from . import media
 
@@ -33,58 +32,63 @@ def available():
         return False
 
 
-def _frames(src, w, h):
-    import numpy as np
-    cmd = ["ffmpeg", "-v", "error", "-i", str(src), "-vf", f"fps={SAMPLE_FPS},scale={w}:{h},format=gray",
-           "-f", "rawvideo", "-"]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    n = w * h
-    k = 0
-    while True:
-        buf = p.stdout.read(n)
-        if len(buf) < n:
-            break
-        yield k / SAMPLE_FPS, np.frombuffer(buf, np.uint8).reshape(h, w)
-        k += 1
-    p.wait()
+def analysis_size(width, height):
+    return ANALYSIS_W, int(round(height * ANALYSIS_W / width / 2)) * 2
 
 
-def analyze(src):
-    """Devuelve {'samples': [[t, cx_norm|None, ancho_cara_norm|None]], 'shots': [t_inicio...]}."""
-    import cv2
-    import numpy as np
-    info = media.probe(src)
-    w = ANALYSIS_W
-    h = int(round(info["height"] * w / info["width"] / 2)) * 2
-    front = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    prof = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
-    samples, shots, prev_small, prev_cx = [], [0.0], None, None
-    for t, g in _frames(src, w, h):
+class FaceScan:
+    """Recibe fotogramas en gris (t, imagen) y acumula caras y cambios de plano."""
+
+    def __init__(self, info):
+        import cv2
+        self.cv2 = cv2
+        self.info = info
+        self.w, self.h = analysis_size(info["width"], info["height"])
+        self.front = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        self.prof = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+        self.samples, self.shots, self.prev_small, self.prev_cx = [], [0.0], None, None
+
+    def feed(self, t, g):
+        import numpy as np
+        cv2, w, h = self.cv2, self.w, self.h
         small = cv2.resize(g, (64, 36), interpolation=cv2.INTER_AREA).astype(np.int16)
-        if prev_small is not None and np.abs(small - prev_small).mean() > SCENE_DIFF:
-            shots.append(round(t, 2))
-            prev_cx = None
-        prev_small = small
+        if self.prev_small is not None and np.abs(small - self.prev_small).mean() > SCENE_DIFF:
+            self.shots.append(round(t, 2))
+            self.prev_cx = None
+        self.prev_small = small
         ming = max(24, h // 12)
-        faces = list(front.detectMultiScale(g, 1.1, 5, minSize=(ming, ming)))
+        faces = list(self.front.detectMultiScale(g, 1.1, 5, minSize=(ming, ming)))
         if not faces:
-            faces = list(prof.detectMultiScale(g, 1.1, 5, minSize=(ming, ming)))
-            faces += [(w - x - fw, y, fw, fh) for x, y, fw, fh in prof.detectMultiScale(cv2.flip(g, 1), 1.1, 5, minSize=(ming, ming))]
+            faces = list(self.prof.detectMultiScale(g, 1.1, 5, minSize=(ming, ming)))
+            faces += [(w - x - fw, y, fw, fh) for x, y, fw, fh in self.prof.detectMultiScale(cv2.flip(g, 1), 1.1, 5, minSize=(ming, ming))]
         if faces:
+            prev = self.prev_cx
+
             # la cara más grande, pero con preferencia por la que ya seguíamos (no saltar entre personas)
             def score(f):
                 x, y, fw, fh = f
                 s = fw * fh
-                if prev_cx is not None:
-                    s *= 1.0 / (1.0 + 4 * abs((x + fw / 2) / w - prev_cx))
+                if prev is not None:
+                    s *= 1.0 / (1.0 + 4 * abs((x + fw / 2) / w - prev))
                 return s
             x, y, fw, fh = max(faces, key=score)
-            prev_cx = (x + fw / 2) / w
-            samples.append([round(t, 2), round(prev_cx, 4), round(fw / w, 4), round((y + fh / 2) / h, 4)])
+            self.prev_cx = (x + fw / 2) / w
+            self.samples.append([round(t, 2), round(self.prev_cx, 4), round(fw / w, 4), round((y + fh / 2) / h, 4)])
         else:
-            samples.append([round(t, 2), None, None])
-    return {"duration": info["duration"], "width": info["width"], "height": info["height"],
-            "samples": samples, "shots": shots}
+            self.samples.append([round(t, 2), None, None])
+
+    def result(self):
+        i = self.info
+        return {"duration": i["duration"], "width": i["width"], "height": i["height"],
+                "samples": self.samples, "shots": self.shots}
+
+
+def analyze(src):
+    """Análisis suelto (sin QA). El render usa run(), que comparte la decodificación con el QA."""
+    from . import qa
+    scan = FaceScan(media.probe(src))
+    qa.analyze(src, frame_cb=scan.feed, frame_size=(scan.w, scan.h), frame_fps=SAMPLE_FPS)
+    return scan.result()
 
 
 def _median(v, k=2):
@@ -142,19 +146,19 @@ def x_at(path, t):
     return x0 + (x1 - x0) * (t - t0) / (t1 - t0)
 
 
-def write_sendcmd(path, shots, out_file, fps, out_duration, to_src=lambda t: t, sw=None):
+def write_sendcmd(path, shots, out_file, fps, out_duration, to_src=lambda t: t, factor=1.0):
     """Una línea por fotograma de salida cuando x cambia. Dentro de un plano interpola;
-    en un cambio de plano el salto es seco (como un corte de cámara), nunca un barrido."""
+    en un cambio de plano el salto es seco (como un corte de cámara), nunca un barrido.
+    factor: de píxeles del frame escalado a píxeles de la fuente (el recorte se hace antes de escalar)."""
     by_shot = [[p for p in path if s0 <= p[0] < s1] for s0, s1 in zip(shots, shots[1:] + [float("inf")])]
     lines, last = [], None
     for k in range(int(out_duration * fps) + 1):
         t = k / fps
         ts = to_src(t)
         sub = by_shot[max(0, bisect.bisect_right(shots, ts) - 1)] or path
-        x = int(round(x_at(sub, ts)))
+        x = int(round(x_at(sub, ts) * factor))
         if x != last:
-            # relativo a iw para que un zoom de énfasis siga centrado en la cara
-            lines.append(f"{t:.3f} crop@rf x {x + 540}*iw/{sw}-540;" if sw else f"{t:.3f} crop@rf x {x};")
+            lines.append(f"{t:.3f} crop@rf x {x};")
             last = x
     pathlib.Path(out_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(lines)
@@ -174,12 +178,16 @@ def face_box(a):
 
 
 def run(job_dir):
-    """Analiza el original del trabajo y guarda reframe.json (se reutiliza si ya existe)."""
+    """Analiza el original del trabajo y guarda reframe.json (se reutiliza si ya existe).
+    La decodificación se comparte con el análisis de QA del original (qa_source.json)."""
+    from . import qa
     job_dir = pathlib.Path(job_dir)
     f = job_dir / "reframe.json"
     if f.exists():
         return json.loads(f.read_text(encoding="utf-8"))
-    a = analyze(next(job_dir.glob("source.*")))
+    scan = FaceScan(media.probe(next(job_dir.glob("source.*"))))
+    qa.source(job_dir, frame_cb=scan.feed, frame_size=(scan.w, scan.h))
+    a = scan.result()
     a["scaled_width"], a["path"] = build_path(a)
     seen = sum(1 for s in a["samples"] if s[1] is not None)
     a["face_ratio"] = round(seen / max(1, len(a["samples"])), 2)

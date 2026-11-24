@@ -20,6 +20,6 @@ assert cuts.map_time(6.0, segs) is not None and cuts.map_time(5.0, segs) is None
 out_words = cuts.remap_words(words, segs)
 assert [x["word"] for x in out_words][-6:] == ["hoy", "vamos", "a", "ver", "algo.", "Fin"], out_words
 assert all(b["start"] >= a["end"] - 1e-6 for a, b in zip(out_words, out_words[1:]))
-g, v, a = cuts.filter_graph(segs, True)
-assert "acrossfade=d=0.03" in g and v == "vc"
+inp, g, v, a = cuts.filter_graph(segs, True, "source.mp4")
+assert "acrossfade=d=0.03" in g and v == "vc" and inp.count("-i") == len(segs) and "[0:v]trim" in g
 print("OK cuts:", len(p), "propuestas,", len(segs), "tramos")

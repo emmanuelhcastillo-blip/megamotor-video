@@ -23,7 +23,7 @@ f = pathlib.Path(tempfile.mkdtemp()) / "crop.cmd"
 n = reframe.write_sendcmd(path, a["shots"], f, 30, 20)
 lines = f.read_text().splitlines()
 assert n == len(lines) and lines[0].startswith("0.000 crop@rf x ")
-xv = [(float(l.split()[0]), int(l.split()[3].rstrip(";").split("*")[0])) for l in lines]
+xv = [(float(l.split()[0]), int(l.split()[3].rstrip(";"))) for l in lines]
 jump = [(t, x) for t, x in xv if 14.9 < t < 15.1]
 assert jump and jump[-1][1] == round(0.20 * sw - 540), jump
 print("OK reframe:", n, "comandos")
