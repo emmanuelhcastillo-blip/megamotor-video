@@ -80,7 +80,7 @@ def analyze(src):
                 return s
             x, y, fw, fh = max(faces, key=score)
             prev_cx = (x + fw / 2) / w
-            samples.append([round(t, 2), round(prev_cx, 4), round(fw / w, 4)])
+            samples.append([round(t, 2), round(prev_cx, 4), round(fw / w, 4), round((y + fh / 2) / h, 4)])
         else:
             samples.append([round(t, 2), None, None])
     return {"duration": info["duration"], "width": info["width"], "height": info["height"],
@@ -142,7 +142,7 @@ def x_at(path, t):
     return x0 + (x1 - x0) * (t - t0) / (t1 - t0)
 
 
-def write_sendcmd(path, shots, out_file, fps, out_duration, to_src=lambda t: t):
+def write_sendcmd(path, shots, out_file, fps, out_duration, to_src=lambda t: t, sw=None):
     """Una línea por fotograma de salida cuando x cambia. Dentro de un plano interpola;
     en un cambio de plano el salto es seco (como un corte de cámara), nunca un barrido."""
     by_shot = [[p for p in path if s0 <= p[0] < s1] for s0, s1 in zip(shots, shots[1:] + [float("inf")])]
@@ -153,10 +153,24 @@ def write_sendcmd(path, shots, out_file, fps, out_duration, to_src=lambda t: t):
         sub = by_shot[max(0, bisect.bisect_right(shots, ts) - 1)] or path
         x = int(round(x_at(sub, ts)))
         if x != last:
-            lines.append(f"{t:.3f} crop@rf x {x};")
+            # relativo a iw para que un zoom de énfasis siga centrado en la cara
+            lines.append(f"{t:.3f} crop@rf x {x + 540}*iw/{sw}-540;" if sw else f"{t:.3f} crop@rf x {x};")
             last = x
     pathlib.Path(out_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(lines)
+
+
+def face_box(a):
+    """Cuadrado (x, y, lado) del 9:16 ya recortado donde suele estar la cara: para el círculo del pip."""
+    got = [s for s in a["samples"] if s[1] is not None and len(s) > 3]
+    if not got:
+        return None
+    sc = max(OUT_W / a["width"], OUT_H / a["height"])
+    fw = sorted(s[2] for s in got)[len(got) // 2] * a["width"] * sc
+    cy = sorted(s[3] for s in got)[len(got) // 2] * a["height"] * sc
+    side = int(min(OUT_W, max(480, 2.6 * fw))) // 2 * 2
+    y = int(min(OUT_H - side, max(0, cy - side * 0.45)))
+    return [(OUT_W - side) // 2, y, side]
 
 
 def run(job_dir):
@@ -169,5 +183,6 @@ def run(job_dir):
     a["scaled_width"], a["path"] = build_path(a)
     seen = sum(1 for s in a["samples"] if s[1] is not None)
     a["face_ratio"] = round(seen / max(1, len(a["samples"])), 2)
+    a["face_box"] = face_box(a)
     f.write_text(json.dumps(a), encoding="utf-8")
     return a

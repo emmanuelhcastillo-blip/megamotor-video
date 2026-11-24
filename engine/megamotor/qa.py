@@ -73,7 +73,7 @@ def _new(out_ranges, src_ranges, tol=0.5):
             if not any(r[0] < s[1] + tol and s[0] - tol < r[1] for s in src_ranges)]
 
 
-def check(src, out, expect=(1080, 1920), segs=None):
+def check(src, out, expect=(1080, 1920), segs=None, static=()):
     with ThreadPoolExecutor(2) as ex:
         fs, fo = ex.submit(analyze, src), ex.submit(analyze, out)
         s, o = fs.result(), fo.result()
@@ -92,7 +92,7 @@ def check(src, out, expect=(1080, 1920), segs=None):
         f"salida {o['duration']}s vs esperado {expected}s" + (f" (original {s['duration']}s, cortes aprobados)" if segs else ""))
     if expect:
         add("resolucion", (o["width"], o["height"]) == tuple(expect), f"{o['width']}x{o['height']}")
-    nf = _new(o["freezes"], s["freezes"])
+    nf = _new(o["freezes"], s["freezes"] + [tuple(x) for x in static or []], tol=0.2)
     add("sin_congelaciones", not nf, nf or "ninguna nueva")
     nb = _new(o["blacks"], s["blacks"])
     add("sin_negros", not nb, nb or "ninguno nuevo")
@@ -111,15 +111,18 @@ def check(src, out, expect=(1080, 1920), segs=None):
     return report
 
 
-def run(job_dir, out_name="reel.mp4", expect=(1080, 1920), segs=None):
+def run(job_dir, out_name="reel.mp4", expect=(1080, 1920), segs=None, static=None):
+    """segs: tramos conservados si hubo cortes aprobados. static: tramos de salida con imagen fija
+    intencionada (pip). Si no se pasan, se leen de render_report.json (comando `qa` suelto)."""
     job_dir = pathlib.Path(job_dir)
     src = next(job_dir.glob("source.*"))
+    rr = job_dir / "render_report.json"
+    r = json.loads(rr.read_text(encoding="utf-8")) if rr.exists() else {}
     if segs is None:
-        rr = job_dir / "render_report.json"
-        c = cuts.load(job_dir)
-        if rr.exists() and json.loads(rr.read_text(encoding="utf-8")).get("cuts_applied") and c:
-            segs = cuts.keeps(c["cuts"], media.probe(src)["duration"])
-    rep = check(src, job_dir / out_name, expect, segs)
+        segs = [tuple(x) for x in r.get("keep_segments") or []]
+    if static is None:
+        static = [tuple(x) for x in r.get("static_ranges") or []]
+    rep = check(src, job_dir / out_name, expect, segs, static)
     (job_dir / "qa_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     return rep
 

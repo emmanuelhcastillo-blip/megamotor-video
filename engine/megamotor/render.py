@@ -4,7 +4,7 @@ import json
 import pathlib
 import time
 
-from . import captions, cuts, media, qa, reframe
+from . import captions, cuts, effects, media, qa, reframe
 from .config import env
 
 
@@ -13,7 +13,6 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     src = next(job_dir.glob("source.*"))
     info = media.probe(src)
     out = job_dir / "reel.mp4"
-    vf = []
     segs = None
     if apply_cuts:
         data = cuts.load(job_dir)
@@ -24,52 +23,75 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
             segs = None
     expected = sum(b - a for a, b in segs) if segs else info["duration"]
 
-    tracked = None
+    plan_file = job_dir / "plan.json"
+    plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else {}
+    fps = min(round(info["fps"]), 30)
+    inputs = ["-i", src.name]
+    graph = []
+    if segs:
+        g, vin, ain = cuts.filter_graph(segs, info["has_audio"])
+        graph.append(g)
+    else:
+        vin, ain = "0:v", "0:a"
+
+    tracked, zooms, pips, box = None, [], [], None
     if vertical:
         # cubre 1080x1920 y recorta. crop_x en píxeles del frame ya escalado; None = seguir la cara (o centro).
-        x = "(iw-1080)/2" if crop_x is None else str(int(crop_x))
-        crop = f"crop@rf=1080:1920:{x}:(ih-1920)/2"
-        if crop_x is None and track and info["width"] * 1920 > info["height"] * 1080 * 1.02 and reframe.available():
+        # x se expresa respecto a sw para que el zoom de énfasis siga centrado en el mismo punto.
+        sw, sh = effects.scaled_size(info["width"], info["height"])
+        x = "(iw-1080)/2" if crop_x is None else f"{int(crop_x) + 540}*iw/{sw}-540"
+        crop = f"crop@rf=1080:1920:{x}:(ih-1920)*0.4"
+        if crop_x is None and track and sw > 1080 * 1.02 and reframe.available():
             rf = reframe.run(job_dir)
             if rf["face_ratio"] >= 0.2:
-                fps_out = min(round(info["fps"]), 30)
                 to_src = (lambda t: cuts.unmap_time(t, segs)) if segs else (lambda t: t)
-                reframe.write_sendcmd(rf["path"], rf["shots"], job_dir / "crop.cmd", fps_out, expected, to_src)
+                reframe.write_sendcmd(rf["path"], rf["shots"], job_dir / "crop.cmd", fps, expected, to_src, sw)
                 crop = "sendcmd=f=crop.cmd," + crop
                 tracked = rf["face_ratio"]
-        vf.append(f"scale=1080:1920:force_original_aspect_ratio=increase,{crop}")
+                box = rf.get("face_box")
+        zooms = effects._to_out(plan.get("zooms"), segs)
+        if zooms:
+            scale = f"scale=w='trunc({sw}*({effects.zoom_expr(zooms)})/2)*2':h=-2:eval=frame"
+        else:
+            scale = f"scale={sw}:{sh}"
+        graph.append(f"[{vin}]{scale},setsar=1,{crop}[vbase]")
+        pips = effects._to_out(plan.get("pip"), segs)
+        effects.no_overlap(zooms + pips)
+    else:
+        graph.append(f"[{vin}]null[vbase]")
+
+    vcur = "vbase"
+    if pips:
+        imgs = effects.pip_images(job_dir, pips)
+        mask, ring = effects.make_masks(job_dir)
+        first = len(inputs) // 2
+        inputs += ["-i", mask.name, "-i", ring.name]
+        for img in imgs:
+            inputs += ["-loop", "1", "-i", str(img)]
+        parts, vcur = effects.pip_graph(vcur, pips, first, fps, box)
+        graph += parts
 
     if subs != "none":
         words_file = job_dir / "words.json"
         if not words_file.exists():
             raise SystemExit("No hay words.json. Corre primero: megamotor transcribe <id>")
         words = json.loads(words_file.read_text(encoding="utf-8"))["words"]
-        plan_file = job_dir / "plan.json"
-        plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else {}
         pt = plan.get("pt_segments") if subs == "es-pt" else None
         if segs:
             words, pt = cuts.remap_words(words, segs), cuts.remap_segments(pt, segs)
         ass = captions.build_ass(words, pt, font=font or env("SUB_FONT", "DejaVu Sans"))
         (job_dir / "subs.ass").write_text(ass, encoding="utf-8")
-        vf.append("ass=subs.ass")
-
-    cmd = ["ffmpeg", "-y", "-v", "error", "-i", src.name]
-    loud = "loudnorm=I=-16:TP=-1.5:LRA=11"
-    if segs:
-        g, vl, al = cuts.filter_graph(segs, info["has_audio"])
-        g += f";[{vl}]{','.join(vf) or 'null'}[vout]"
-        if info["has_audio"]:
-            g += f";[{al}]{loud}[aout]"
-        cmd += ["-filter_complex", g, "-map", "[vout]"] + (["-map", "[aout]"] if info["has_audio"] else [])
-    elif vf:
-        cmd += ["-vf", ",".join(vf)]
-    fps = min(round(info["fps"]), 30)
-    cmd += ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p"]
+        graph.append(f"[{vcur}]ass=subs.ass[vout]")
+    else:
+        graph.append(f"[{vcur}]null[vout]")
     if info["has_audio"]:
-        if not segs:
-            cmd += ["-af", loud]
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-    cmd += ["-movflags", "+faststart", out.name]
+        graph.append(f"[{ain}]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+
+    cmd = ["ffmpeg", "-y", "-v", "error"] + inputs + ["-filter_complex", ";".join(graph), "-map", "[vout]"]
+    if info["has_audio"]:
+        cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+    cmd += ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p",
+            "-t", f"{expected + 0.05:.3f}", "-movflags", "+faststart", out.name]
 
     t0 = time.time()
     import subprocess
@@ -87,9 +109,12 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
               "resolution": f"{res['width']}x{res['height']}", "under_10_min": secs < 600,
               "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
               "cut_seconds": round(info["duration"] - expected, 2),
-              "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro")}
+              "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
+              "zooms": len(zooms), "pip": len(pips),
+              "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}
     t1 = time.time()
-    rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None, segs=segs or [])
+    rq = qa.run(job_dir, out.name, expect=(1080, 1920) if vertical else None, segs=segs or [],
+                static=report["static_ranges"])
     report["qa_ok"] = rq["ok"]
     report["qa_seconds"] = round(time.time() - t1, 1)
     (job_dir / "render_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
