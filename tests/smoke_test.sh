@@ -128,6 +128,19 @@ EOF
 else
   echo "AVISO: motion/node_modules no existe; se salta el render con Remotion"
 fi
+# teaser: la frase fuerte se repite al inicio; nada se quita y el reel queda más largo
+echo '{"caption":"x","teaser":{"start":0.4,"end":2.3},"zooms":[{"start":3,"end":4.5,"scale":1.1}]}' > "$D3/plan.json"
+python3 -m megamotor render "$ID3" --subs es | tail -1
+python3 - "$D3" <<'EOF'
+import json, sys
+d = sys.argv[1]
+r = json.load(open(d + "/render_report.json"))
+assert r["qa_ok"] and r["teaser_seconds"] == 1.9 and abs(r["output_seconds"] - 9.9) < 0.15, r
+ass = open(d + "/subs.ass").read()
+assert ass.count("HOLA") == 2, "las palabras del teaser se repiten en los subtítulos"
+print("OK teaser:", r["output_seconds"], "s")
+EOF
+
 # sonido: "voz" a ráfagas con pausas reales + ruido de fondo; música bajo la voz; whoosh; música doble prohibida
 V="$MEGAMOTOR_DATA/voz.mp4"
 ffmpeg -y -v error -f lavfi -i testsrc2=size=1920x1080:rate=30:duration=8 \

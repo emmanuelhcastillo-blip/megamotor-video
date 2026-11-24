@@ -107,7 +107,7 @@ def _loudnorm(a):
             f":measured_thresh={L['input_thresh']}:offset={L['target_offset']}:linear=true")
 
 
-def audio_graph(job_dir, ain, plan, analysis, segs, first_input):
+def audio_graph(job_dir, ain, plan, analysis, segs, first_input, offset=0.0, out_sfx=()):
     """Devuelve (partes del grafo, entradas extra, informe). La salida se llama [aout]."""
     job_dir = pathlib.Path(job_dir)
     parts, inputs, rep = [], [], {"denoise": False, "sfx": 0, "music": False}
@@ -136,12 +136,17 @@ def audio_graph(job_dir, ain, plan, analysis, segs, first_input):
         mix.append("mus")
         rep["music"] = True
 
-    for k, s in enumerate(plan.get("sfx") or []):
+    items = []
+    for s in plan.get("sfx") or []:
         t = float(s["t"])
         if segs:
             t = cuts.map_time(t, segs)
             if t is None:
                 continue
+        items.append(dict(s, t=t + offset))
+    items += [{"t": t, "kind": kind} for t, kind in out_sfx]   # ya en tiempo de salida
+    for k, s in enumerate(items):
+        t = s["t"]
         f = make_sfx(job_dir, s.get("kind", "whoosh"))
         g = min(float(s.get("gain_db", SFX_DB)), SFX_MAX_DB)
         i = first_input + inputs.count("-i")

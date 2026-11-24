@@ -4,6 +4,8 @@
 - "pip":   [{"start": 8.0, "end": 11.0, "image": "img/foto.jpg", "circle": true}]
   la imagen ocupa la pantalla (paneo lento) y la persona sigue hablando en un círculo; "circle": false = sin
   círculo (máx. 3,5 s). Imágenes reales, sin repetir.
+- "teaser": {"start": 119.5, "end": 125.0}  la frase más fuerte se repite al principio como gancho
+  (se añade, no se quita nada); entra con barrido y whoosh si la capa de motion está instalada.
 - "color": "natural" | "pop" | {"contrast":1.1,"saturation":1.3,"gamma":0.98,"warmth":0.03,"vignette":true}
   corrección de color sobre la persona (no sobre las imágenes del pip ni los gráficos).
 Pocos efectos y sin superponer: se rechazan zooms o pip que se pisen entre sí.
@@ -31,12 +33,13 @@ def scaled_size(w, h, ow=1080, oh=1920):
     return max(ow, _even_up(w * sc)), max(oh, _even_up(h * sc))
 
 
-def _to_out(items, segs):
+def _to_out(items, segs, offset=0.0):
+    """Tiempos del original -> salida (segs = tramos del cuerpo; offset = duración del teaser)."""
     out = []
     for it in items or []:
         rs = cuts.map_range((float(it["start"]), float(it["end"])), segs) if segs else [(float(it["start"]), float(it["end"]))]
         if rs and rs[-1][1] - rs[0][0] > 0.3:
-            out.append(dict(it, start=rs[0][0], end=rs[-1][1]))
+            out.append(dict(it, start=round(rs[0][0] + offset, 3), end=round(rs[-1][1] + offset, 3)))
     no_overlap(out)
     return out
 

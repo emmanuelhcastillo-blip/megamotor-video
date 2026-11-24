@@ -21,10 +21,18 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         segs = cuts.keeps(data["cuts"], info["duration"])
         if not any(c.get("apply") for c in data["cuts"]):
             segs = None
-    expected = sum(b - a for a, b in segs) if segs else info["duration"]
-
     plan_file = job_dir / "plan.json"
     plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else {}
+    body = segs  # tramos del cuerpo (None = el original entero)
+    tz = plan.get("teaser")
+    T = 0.0
+    if tz:
+        ts, te = float(tz["start"]), float(tz["end"])
+        T = round(te - ts, 3)
+        if not (0 <= ts < te <= info["duration"] and 1.5 <= T <= 8):
+            raise SystemExit("teaser: debe durar entre 1,5 y 8 s dentro del video")
+        segs = [(ts, te)] + (body or [(0.0, info["duration"])])
+    expected = sum(b - a for a, b in segs) if segs else info["duration"]
     fps = min(round(info["fps"]), 30)
     graph = []
     if segs:
@@ -56,18 +64,23 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
         g = effects.grade(plan.get("color"))
         if g:
             chain += "," + g
-        zooms = effects._to_out(plan.get("zooms"), segs)
+        zooms = effects._to_out(plan.get("zooms"), body, T)
         if zooms:
             # fuera de los zooms el tamaño no cambia y el escalado no trabaja
             chain += (f",scale=w='trunc(1080*({effects.zoom_expr(zooms)})/2)*2':h=-2:eval=frame,"
                       f"crop=1080:1920:(iw-1080)/2:(ih-1920)*0.4")
         graph.append(f"[{vin}]{chain}[vbase]")
-        pips = effects._to_out(plan.get("pip"), segs)
+        pips = effects._to_out(plan.get("pip"), body, T)
     else:
         graph.append(f"[{vin}]{effects.grade(plan.get('color')) or 'null'}[vbase]")
     words_file = job_dir / "words.json"
     all_words = json.loads(words_file.read_text(encoding="utf-8"))["words"] if words_file.exists() else []
-    mitems = effects._to_out(motion.validate(plan.get("motion"), all_words), segs)
+    mitems = effects._to_out(motion.validate(plan.get("motion"), all_words), body, T)
+    out_sfx = []
+    if tz and tz.get("transition", True) and (motion.MOTION_DIR / "node_modules").exists():
+        # el teaser entra al cuerpo con un barrido y un whoosh (muy por debajo de la voz)
+        mitems.append({"start": round(T - 0.25, 3), "end": round(T + 0.25, 3), "kind": "barrido"})
+        out_sfx.append((max(0.0, T - 0.35), "whoosh"))
     effects.no_overlap(zooms + pips + mitems)
 
     vcur = "vbase"
@@ -110,7 +123,7 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     srep = {}
     if info["has_audio"]:
         an = sound.run(job_dir, all_words)
-        parts, extra, srep = sound.audio_graph(job_dir, ain, plan, an, segs, inputs.count("-i"))
+        parts, extra, srep = sound.audio_graph(job_dir, ain, plan, an, body, inputs.count("-i"), T, out_sfx)
         inputs += extra
         graph += parts
         srep["music_in_source"] = an.get("music_likely")
@@ -137,8 +150,8 @@ def render(job_dir: pathlib.Path, subs="es", vertical=True, crop_x=None, font=No
     report = {"render_seconds": round(secs, 1), "source_seconds": round(info["duration"], 2),
               "output_seconds": round(res["duration"], 2), "size_mb": res["size_mb"],
               "resolution": f"{res['width']}x{res['height']}", "under_10_min": secs < 600,
-              "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if segs else 0,
-              "cut_seconds": round(info["duration"] - expected, 2),
+              "cuts_applied": len(cuts.merge([c for c in data["cuts"] if c.get("apply")])) if body else 0,
+              "cut_seconds": round(info["duration"] + T - expected, 2), "teaser_seconds": T,
               "reframe": f"cara {tracked:.0%}" if tracked is not None else ("manual" if crop_x is not None else "centro"),
               "zooms": len(zooms), "pip": len(pips), "motion": len(mitems), "color": plan.get("color"), "sound": srep,
               "keep_segments": segs or [], "static_ranges": [[x["start"], x["end"]] for x in pips]}

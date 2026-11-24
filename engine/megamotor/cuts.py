@@ -133,20 +133,26 @@ def map_range(r, segs):
 
 
 def remap_words(words, segs):
-    out = []
-    for x in words:
-        s, e = map_time(x["start"], segs), map_time(x["end"], segs)
-        if s is not None and e is not None:
-            out.append(dict(x, start=s, end=e))
+    """Palabras del original -> salida. Recorre los tramos en orden, así que un tramo repetido
+    (teaser) repite sus palabras. Una palabra partida por un corte se descarta."""
+    out, acc = [], 0.0
+    for a, b in segs:
+        for x in words:
+            if x["start"] >= a - 1e-6 and x["end"] <= b + 1e-6:
+                out.append(dict(x, start=round(acc + x["start"] - a, 3), end=round(acc + x["end"] - a, 3)))
+        acc += b - a
     return out
 
 
 def remap_segments(segments, segs):
-    out = []
-    for x in segments or []:
-        rs = map_range((x["start"], x["end"]), segs)
-        if rs:
-            out.append(dict(x, start=rs[0][0], end=rs[-1][1]))
+    """Frases (p. ej. pt_segments) -> salida; cada trozo visible conserva su texto."""
+    out, acc = [], 0.0
+    for a, b in segs:
+        for x in segments or []:
+            lo, hi = max(x["start"], a), min(x["end"], b)
+            if hi - lo > 0.1:
+                out.append(dict(x, start=round(acc + lo - a, 3), end=round(acc + hi - a, 3)))
+        acc += b - a
     return out
 
 
